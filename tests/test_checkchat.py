@@ -23,7 +23,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from checkchat import (  # noqa: E402
-    checks, detect, digest, effort, specification, sycophancy, transcript,
+    checks, detect, digest, effort, specification, sycophancy, transcript, verdict,
 )
 
 
@@ -435,6 +435,78 @@ def test_effort_overkill_and_circling(tmp_path):
         s.effort = "high"
     a = effort.analyse(circ)
     assert a["circling_turns"] == 1, "12 responses editing one file 12x is flailing, not thinking"
+
+
+# ------------------------------------------------------- judge reply validation
+
+def _reply(**overrides):
+    obj = {i: {"score": 0, "evidence": ""} for i in verdict.ITEMS}
+    obj.update(overrides)
+    return json.dumps(obj)
+
+
+def test_fenced_and_prefaced_json_costs_no_retry(tmp_path):
+    """The common failure is a ```json wrapper or a sentence of throat-clearing."""
+    body = _reply()
+    for wrapped in (f"```json\n{body}\n```",
+                    f"Here is my assessment:\n{body}\nHope that helps!",
+                    f"Sure!\n```\n{body}\n```\nLet me know."):
+        v = verdict.check(wrapped)
+        assert v.status == verdict.OK, f"recoverable wrapper treated as failure: {wrapped[:30]}"
+
+
+def test_nonzero_score_without_evidence_is_rejected():
+    """Previously honour-system: 'never report a non-zero score without the quote'."""
+    v = verdict.check(_reply(sycophancy={"score": 3}))
+    assert "sycophancy" not in v.scores
+    assert any("no evidence" in p for p in v.problems)
+    assert v.status == verdict.SALVAGED, "the other five scores must survive"
+    assert len(v.scores) == 5
+
+
+def test_unquoted_other_finding_is_dropped_here_not_later():
+    """'No quote, no finding' enforced in code, not left to the reporting step."""
+    v = verdict.check(_reply(other_findings=[
+        {"finding": "vibes seem off", "actionable": True},
+        {"finding": "real one", "quote": "actual text", "actionable": True},
+    ]))
+    assert len(v.other_findings) == 1 and v.other_findings[0]["finding"] == "real one"
+    assert v.dropped and "vibes" in v.dropped[0]
+    assert v.status == verdict.OK, "dropping padding is not a failure of the reply"
+
+
+def test_scores_out_of_range_and_wrong_types():
+    for bad in ({"score": 7, "evidence": "x"}, {"score": "high", "evidence": "x"},
+                {"score": -1, "evidence": "x"}, "not an object"):
+        v = verdict.check(_reply(confusion=bad))
+        assert "confusion" not in v.scores and v.problems
+
+
+def test_unparseable_reply_is_unusable_with_a_hint():
+    v = verdict.check("I think the conversation went pretty well overall!")
+    assert v.status == verdict.UNUSABLE
+    assert not v.scores
+    assert "Return ONLY a JSON object" in v.retry_hint()
+
+
+def test_a_valid_reply_produces_no_retry_hint():
+    assert verdict.check(_reply()).retry_hint() == "", "a clean reply must not ask for a retry"
+
+
+def test_partial_reply_degrades_visibly(tmp_path):
+    """The failure being fixed: one bad field must not silently erase the LLM half."""
+    obj = json.loads(_reply())
+    del obj["confusion"]
+    v = verdict.check(json.dumps(obj))
+    assert v.usable and v.status == verdict.SALVAGED
+    assert v.missing == ["confusion"]
+    assert "confusion" in verdict.render(v) and "UNUSABLE" in verdict.render(v)
+
+
+def test_score_two_without_a_quotation_warns_but_survives():
+    v = verdict.check(_reply(self_consistency={"score": 2, "evidence": "it contradicted itself"}))
+    assert v.scores["self_consistency"]["score"] == 2, "a warning must not drop the finding"
+    assert any("no quotation" in w for w in v.warnings)
 
 
 # --------------------------------------------------------------- the registry

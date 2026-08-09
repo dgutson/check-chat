@@ -91,9 +91,43 @@ makes the whole command worthless. Equally, do not tell the judge what you expec
 to find; you would be handing it the bias it exists to avoid.
 
 It returns strict JSON: the six items scored 0-3 with quoted evidence,
-`candidate_verdicts` for each supplied candidate, and `other_findings`. If it returns
-something unparseable, say so plainly and report the deterministic half alone rather
-than inventing scores.
+`candidate_verdicts` for each supplied candidate, and `other_findings`.
+
+## 2b. Validate the reply — do not eyeball it
+
+Pipe the judge's reply through the validator instead of reading it for correctness
+yourself. Checking JSON shape is arithmetic, and this plugin does not spend model
+attention on arithmetic.
+
+```bash
+checkchat --verdict <<'JUDGE'
+<the judge's reply, verbatim>
+JUDGE
+```
+
+Act on the **exit code**:
+
+| exit | meaning | what to do |
+|---|---|---|
+| `0` | valid | proceed to step 3 |
+| `1` | **salvaged** — some items usable, some not | proceed with what survived, and **say in the report which items are missing and why** |
+| `2` | unusable | re-dispatch the judge **once**, appending the printed `RETRY HINT`. If the second reply is still unusable, report the deterministic half alone and say plainly that the independent read failed |
+
+It also enforces two rules that used to be requests rather than checks, so you no
+longer have to police them by hand:
+
+- **A non-zero score with no evidence is rejected**, not reported. The other items
+  survive — one bad field must never erase the whole dimension.
+- **`other_findings` entries with no quote are dropped** before you ever see them.
+  Anything the validator kept has already passed that bar.
+
+`dropped:` and `warning:` lines are informational. A warning ("scored 2 but the
+evidence contains no quotation") is worth a glance before you quote it in the report,
+but it does not invalidate the finding.
+
+**Retry at most once.** This is a diagnostic, not an investigation, and a judge that
+cannot emit valid JSON twice is telling you something you should pass on rather than
+keep paying for.
 
 ## 3. Report
 

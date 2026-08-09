@@ -21,7 +21,7 @@ import sys
 import time
 from pathlib import Path
 
-from . import checks, digest, discover, inventory, transcript
+from . import checks, digest, discover, inventory, transcript, verdict
 
 
 def collect(cwd: str, session_id: str | None = None, siblings: int = 12) -> dict:
@@ -84,6 +84,11 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--text", action="store_true", help="human-readable summary instead of JSON")
     ap.add_argument("--digest-only", action="store_true", help="print just the blinded excerpt")
     ap.add_argument("--catalog", action="store_true", help="list registered checks and exit")
+    ap.add_argument("--verdict", metavar="PATH", nargs="?", const="-", default=None,
+                    help="validate the judge's reply (PATH, or '-' for stdin) and exit "
+                         "0 ok / 1 salvaged / 2 unusable")
+    ap.add_argument("--json", action="store_true",
+                    help="with --verdict, emit the normalised verdict as JSON")
     ap.add_argument("--emit", metavar="DIR", default=None,
                     help="write the judge's evidence to DIR and print only a summary, so the "
                          "excerpt never passes through the calling session's context")
@@ -93,6 +98,12 @@ def main(argv: list[str] | None = None) -> int:
         for c in checks.catalog():
             print(f"{c['name']:<14} {c['dimension']:<12} [{c['evidence']}]  {c['question']}")
         return 0
+
+    if a.verdict is not None:
+        raw = sys.stdin.read() if a.verdict == "-" else Path(a.verdict).read_text(errors="replace")
+        v = verdict.check(raw)
+        print(json.dumps(v.as_dict(), indent=1) if a.json else verdict.render(v))
+        return v.status
 
     d = collect(a.cwd, a.session, a.siblings)
 

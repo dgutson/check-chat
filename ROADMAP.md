@@ -26,17 +26,23 @@ reinstall while everyone else gets the pushed version — convenient, and a good
 ship a change that was never tested as installed. Use `claude plugin tag` for versioned
 releases once the layout settles.
 
+**2. Judge-reply validation** — `checkchat --verdict` (2026-08-09).
+The judge's JSON is now parsed and checked by `checkchat/verdict.py` rather than
+believed. Tolerant of fences and stray prose (the common recoverable failure, which no
+longer costs a retry); strict about the contract. Exit code drives the skill: 0 valid,
+1 salvaged, 2 retry once then degrade visibly.
+
+It also turned two honour-system rules into machine checks — a non-zero score with no
+evidence is rejected while the other items survive, and an `other_findings` entry with
+no quote is dropped before the reporting step can forget to. 8 tests.
+
+Still open: nothing validates that quoted evidence *actually appears in the excerpt*.
+A judge could quote something plausible that was never said, and neither the validator
+nor the reporting step would notice.
+
 ---
 
 ## Now — silent wrongness, in rough order of how quietly it fails
-
-**2. The judge's JSON has no schema validation and no retry.**
-`SKILL.md` says "return strict JSON" and nothing enforces it. The skill tells the model
-to report the deterministic half if parsing fails, which is honest but means the entire
-LLM half can vanish on a formatting slip. This is the single place where a real SDK
-(structured outputs, or PydanticAI) would earn its keep — see "The API question" below.
-- *Done when:* a malformed judge reply produces a stated, visible degradation rather
-  than a silently missing dimension
 
 **3. `compactions` and `truncated` are computed and consumed by nothing.**
 `transcript.py` detects both. No check reads either, and the report never mentions them.
