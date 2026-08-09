@@ -1,0 +1,15 @@
+{
+  "name": "check-chat-marketplace",
+  "description": "Marketplace hosting the check-chat plugin.",
+  "owner": {
+    "name": "Daniel Gutson",
+    "url": "https://github.com/dgutson"
+  },
+  "plugins": [
+    {
+      "name": "check-chat",
+      "source": ".",
+      "description": "Diagnoses a running Claude Code session for context rot, sycophancy, and wasted tokens — then gives you a corrective prompt to repair the chat in place, and proposes a skill or plugin when it finds work a script should be doing."
+    }
+  ]
+}

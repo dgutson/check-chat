@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+# Self-locating launcher for check-chat.
+#
+# Claude Code puts every installed plugin's bin/ directory on PATH, so this is
+# callable as plain `checkchat` from anywhere once the plugin is installed — no
+# environment variable, no hardcoded path, no knowledge of where the plugin lives.
+#
+# That matters because the obvious approach does not work. The skill previously ran
+#     PYTHONPATH="${CLAUDE_PLUGIN_ROOT:-$HOME/src/check-chat}" python3 -m checkchat
+# and CLAUDE_PLUGIN_ROOT turns out not to be set in the tool environment at all. The
+# fallback silently rescued it on the author's machine and would have failed instantly
+# on anyone else's — the worst kind of bug, invisible exactly where it is tested.
+#
+# Resolve symlinks so this still works when PATH points at a link rather than the file.
+
+set -euo pipefail
+
+src="${BASH_SOURCE[0]}"
+while [ -L "$src" ]; do
+  dir="$(cd -P "$(dirname "$src")" && pwd)"
+  src="$(readlink "$src")"
+  [[ $src != /* ]] && src="$dir/$src"
+done
+root="$(cd -P "$(dirname "$src")/.." && pwd)"
+
+if ! command -v python3 >/dev/null 2>&1; then
+  echo "checkchat: python3 not found on PATH" >&2
+  exit 127
+fi
+
+if [ ! -d "$root/checkchat" ]; then
+  echo "checkchat: package not found at $root/checkchat" >&2
+  echo "  (launcher resolved its plugin root to: $root)" >&2
+  exit 1
+fi
+
+exec env PYTHONPATH="$root${PYTHONPATH:+:$PYTHONPATH}" python3 -m checkchat "$@"

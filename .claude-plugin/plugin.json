@@ -1,0 +1,22 @@
+{
+  "name": "check-chat",
+  "description": "Diagnoses a running Claude Code session for context rot, sycophancy, and wasted tokens — then gives you a corrective prompt to repair the chat in place, and proposes a skill or plugin when it finds work a script should be doing.",
+  "version": "0.1.0",
+  "author": {
+    "name": "Daniel Gutson"
+  },
+  "homepage": "https://github.com/dgutson/check-chat",
+  "repository": "https://github.com/dgutson/check-chat",
+  "license": "MIT",
+  "keywords": [
+    "context",
+    "drift",
+    "rot",
+    "sycophancy",
+    "tokens",
+    "optimizer",
+    "diagnostic",
+    "skill",
+    "plugin"
+  ]
+}
