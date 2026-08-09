@@ -1,6 +1,6 @@
 # Roadmap
 
-State as of 2026-08-09. Written so a session with no memory of how this got here can
+State as of 2026-08-09. Published; see "Done" below. Written so a session with no memory of how this got here can
 pick it up.
 
 The plugin is **installed and working end-to-end** on this machine: `/check-chat` runs,
@@ -14,23 +14,21 @@ does not ship**, and one that fires in most sessions is a ranking, not an alarm.
 
 ---
 
-## Now — it does not work for anyone but Daniel
+## Done
 
-**1. Publish to `github.com/dgutson/check-chat`.**
-The README's install commands name a repo that does not exist. The current install is a
-*local-path* marketplace (`installLocation: /home/daniel/src/check-chat`), so it works
-on exactly one machine. This is the only thing standing between the plugin and the users
-it was actually built for: non-experts who will not think to demand pushback, and who
-therefore cannot notice when they stop getting it.
+**1. Published to `github.com/dgutson/check-chat`** — public, MIT, 2026-08-09.
+Verified from a fresh clone: manifests validate, `bin/checkchat` runs with no install
+and no environment variable, 33 tests pass. The plugin is no longer tied to one machine.
 
-- `git init`, first commit, `gh repo create dgutson/check-chat --public --source .`
-- Verify `claude plugin marketplace add dgutson/check-chat` resolves for a fresh install
-- `claude plugin tag` exists for versioned releases; use it once the layout settles
-- *Done when:* someone who has never seen this repo can install it from the README alone
+Still open from that work: the author's own install is still the *local-path* marketplace
+(`installLocation: /home/daniel/src/check-chat`), so his edits go live without a
+reinstall while everyone else gets the pushed version — convenient, and a good way to
+ship a change that was never tested as installed. Use `claude plugin tag` for versioned
+releases once the layout settles.
 
 ---
 
-## Next — silent wrongness, in rough order of how quietly it fails
+## Now — silent wrongness, in rough order of how quietly it fails
 
 **2. The judge's JSON has no schema validation and no retry.**
 `SKILL.md` says "return strict JSON" and nothing enforces it. The skill tells the model
