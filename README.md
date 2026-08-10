@@ -90,7 +90,7 @@ detector that cannot be shown to fire on real data does not ship.**
 | **Redundant re-reads** | Re-reads with *no intervening edit*. Re-reading a file you just changed is correct re-grounding; the naive rule overstates waste by 66%. |
 | **Repeated producer** | One expensive command re-run over unchanged input purely to filter it differently — `strings <100MB binary> \| grep …`, fifteen times. |
 | **Spill re-ingest** | A result the harness judged too big to keep, read back in anyway. Seen once: 2,091 chars kept, 81,056 re-read. |
-| **CLI re-derivation** | Command syntax re-derived via `--help` here *and* in other sessions — the strongest "this should be a skill" signal. |
+| **CLI re-derivation** | Command syntax re-derived via `--help` here *and* in other sessions **anywhere on this machine** — the strongest "this should be a skill" signal, since a skill is installed per user rather than per project. Compared per-directory it measured zero on 51 real sessions; compared machine-wide, 8 of 51. |
 | **Batching ratio** | Tool calls per response. Not waste itself; the multiplier that turns every other finding into round trips. |
 | **Sycophancy** | Short user challenge → position reversal, agreement opener, or a claim quietly hedged into a non-claim. Located deterministically, judged by the model. |
 | **Grounding decay** | Checking reality less as context fills. Reported only against the session's own first quartile, and flagged as weak — because it is. |
@@ -121,7 +121,9 @@ from .checks import register
 
 @register("my_check", "opportunity", evidence="evidenced",
           question="Did the session do X when it could have done Y?")
-def _my_check(ctx):                       # ctx.session, ctx.others (fork-deduplicated)
+def _my_check(ctx):                       # ctx.session; ctx.others = other sessions on
+                                          # this machine, fork-deduplicated, pre-filtered
+                                          # to those containing `--help` (see ROADMAP)
     hits = [c for c in ctx.session.calls if ...]
     return {"fired": bool(hits), "hits": hits,
             "line": f"my_check   {len(hits)} occurrences"}

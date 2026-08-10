@@ -17,13 +17,15 @@ observed to fire is indistinguishable from a broken one, so it fires here on pur
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from checkchat import (  # noqa: E402
-    checks, detect, digest, effort, specification, sycophancy, transcript, verdict,
+    checks, detect, digest, discover, effort, specification, sycophancy, transcript,
+    verdict,
 )
 from checkchat import __main__ as cli  # noqa: E402
 
@@ -833,6 +835,203 @@ def test_a_caveat_is_reported_above_the_numbers_it_qualifies(tmp_path):
     assert "MB were never read" in body[1]
     assert sum(1 for ln in body if ln.lstrip("*! ").startswith("continuity")) == 1, \
         "hoisted out of its dimension, not printed in both places"
+
+
+# ------------------------------------- cross-session recurrence, and its scope
+#
+# This detector shipped for its whole life reporting zero on every real session, and was
+# twice queued for deletion under the project's own rule that an unfired detector does not
+# ship. The cause was not in the detector: `others` was every session *in the same project
+# directory*, and re-derived CLI syntax is a cross-*project* pattern. On the development
+# corpus, per-directory scope fires on 0 of 51 sessions and machine-wide scope on 8, the
+# top family being `claude plugin` re-derived in 4 sessions across 4 separate projects.
+#
+# So these are positive controls in the sense the module header means: the corpus measured
+# zero, and zero from the wrong comparison population is not evidence of anything.
+
+
+def _probe_log(root, project, name, cmds, when):
+    """A transcript under `root/projects/<project>` that probes `--help` for each command.
+
+    `when` varies because the start timestamp is half the fork fingerprint: two fixtures
+    probing identical commands at the identical instant are *supposed* to collapse into
+    one, so leaving it constant makes an independent-sessions test pass or fail for a
+    reason that has nothing to do with what it claims to check.
+    """
+    d = root / "projects" / project
+    d.mkdir(parents=True, exist_ok=True)
+    recs = [_human("go")]
+    for i, cmd in enumerate(cmds):
+        recs.append(_asst("", calls=[(f"t{i}", "Bash", {"command": cmd})], req=f"r{i}"))
+        recs.append(_result(f"t{i}", "usage: ..."))
+    for r in recs:
+        r["timestamp"] = when
+    p = d / name
+    p.write_text("\n".join(json.dumps(r) for r in recs))
+    return p
+
+
+def test_recurring_syntax_is_found_across_projects_not_just_this_folder(tmp_path, monkeypatch):
+    """The regression test for the bug that cost this detector its working life."""
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+    here = _probe_log(tmp_path, "-p-alpha", "a.jsonl", ["claude plugin --help"],
+                      "2026-08-08T00:00:01Z")
+    _probe_log(tmp_path, "-p-beta", "b.jsonl", ["claude plugin --help"],
+               "2026-08-08T00:00:02Z")
+    sess = transcript.load(here)
+
+    same_folder = discover.siblings("/p/alpha", exclude=here, scope="project",
+                                    contains=detect.PROBE_NEEDLE)
+    assert detect.cli_probes(sess, same_folder)["recurring"] == [], \
+        "the old per-directory scope is blind to it — this is the bug, pinned"
+
+    machine = discover.siblings("/p/alpha", exclude=here, contains=detect.PROBE_NEEDLE)
+    assert detect.cli_probes(sess, machine)["recurring"] == ["claude plugin"]
+    assert checks.run(checks.Context(session=sess, others=machine))["cli_probes"]["fired"] \
+        is True, "and it must survive the registry seam, which has leaked findings twice"
+
+
+def test_a_session_is_not_corroborated_by_its_own_fork(tmp_path, monkeypatch):
+    """The guard the roadmap called mandatory, demonstrated — because the corpus cannot.
+
+    Of 18 real probing sessions on the development corpus, **0 form a fork family**, so
+    dedup on and off are indistinguishable there: removing the guard entirely changes no
+    measurement. A constructed fork is therefore the only evidence the guard works, and
+    saying which of the two this is matters more than the test passing.
+
+    Note what `exclude` alone does not cover. Resuming copies the whole prefix, so a fork
+    of the session under test is a *different file* holding the *same* probe — excluding
+    the path leaves it in the pool, where it corroborates its own original and turns one
+    session counted twice into a cross-session finding.
+    """
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+    cmds = ["claude plugin --help"]
+    here = _probe_log(tmp_path, "-p-alpha", "a.jsonl", cmds, "2026-08-08T00:00:01Z")
+    fork = _probe_log(tmp_path, "-p-alpha", "a-resumed.jsonl", cmds, "2026-08-08T00:00:01Z")
+    sess = transcript.load(here)
+
+    assert discover.fingerprint(sess) == discover.fingerprint(transcript.load(fork)), \
+        "fixture check: these must actually look like a fork, or the test proves nothing"
+
+    unguarded = discover.siblings("/p/alpha", exclude=here, contains=detect.PROBE_NEEDLE)
+    assert detect.cli_probes(sess, unguarded)["recurring"] == ["claude plugin"], \
+        "the false positive, shown before it is suppressed"
+
+    guarded = discover.siblings("/p/alpha", exclude=here, contains=detect.PROBE_NEEDLE,
+                                exclude_forks_of=sess)
+    assert detect.cli_probes(sess, guarded)["recurring"] == []
+    assert guarded == []
+
+
+def test_a_genuine_other_session_survives_the_fork_guard(tmp_path, monkeypatch):
+    """The negative control for the guard: it must not suppress everything.
+
+    A guard that rejects all corroboration would make the test above pass while leaving
+    the detector exactly as dead as it was.
+    """
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+    here = _probe_log(tmp_path, "-p-alpha", "a.jsonl", ["gron --help"],
+                      "2026-08-08T00:00:01Z")
+    _probe_log(tmp_path, "-p-alpha", "a-resumed.jsonl", ["gron --help"],
+               "2026-08-08T00:00:01Z")
+    _probe_log(tmp_path, "-p-beta", "b.jsonl", ["gron --help"], "2026-08-08T00:00:09Z")
+    sess = transcript.load(here)
+
+    others = discover.siblings("/p/alpha", exclude=here, contains=detect.PROBE_NEEDLE,
+                              exclude_forks_of=sess)
+    r = detect.cli_probes(sess, others)
+    assert r["recurring"] == ["gron"]
+    assert r["families"][0]["other_sessions"] == 1, \
+        "one corroborating session, not two — the fork must not inflate the count"
+
+
+def test_the_scan_budget_is_spent_on_transcripts_that_could_match(tmp_path, monkeypatch):
+    """Why the `contains` pre-filter is correctness and not merely speed.
+
+    `limit` bounds the scan. Without a pre-filter it bounded it over *all* candidates, so
+    the budget went on sessions that could not contribute while the ones that could sat
+    outside the window unseen — a silent zero indistinguishable from a real one.
+    """
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+    here = _probe_log(tmp_path, "-p-alpha", "a.jsonl", ["gron --help"],
+                      "2026-08-08T00:00:59Z")
+    # The one corroborating session is the OLDEST file, behind a wall of newer noise.
+    old = _probe_log(tmp_path, "-p-beta", "b.jsonl", ["gron --help"], "2026-08-08T00:00:01Z")
+    os.utime(old, (1_700_000_000, 1_700_000_000))
+    for i in range(8):
+        noise = _probe_log(tmp_path, f"-p-noise{i}", "n.jsonl", ["ls -la"],
+                           f"2026-08-08T00:01:{i:02d}Z")
+        os.utime(noise, (1_800_000_000 + i, 1_800_000_000 + i))
+    os.utime(here, (1_900_000_000, 1_900_000_000))
+    sess = transcript.load(here)
+
+    budget = 3
+    unfiltered = discover.siblings("/p/alpha", exclude=here, limit=budget)
+    assert detect.cli_probes(sess, unfiltered)["recurring"] == [], \
+        "the budget went entirely on noise — the failure this pre-filter removes"
+
+    filtered = discover.siblings("/p/alpha", exclude=here, limit=budget,
+                                 contains=detect.PROBE_NEEDLE)
+    assert detect.cli_probes(sess, filtered)["recurring"] == ["gron"]
+    assert len(filtered) == 1, "and it cost one slot of the three, not all of them"
+
+
+def test_a_needle_straddling_a_read_boundary_is_still_found(tmp_path):
+    """A pre-filter's false negative looks exactly like a real zero, so it gets a test.
+
+    `_contains` reads in 1 MB chunks; a needle split across two of them is missed unless
+    the boundary is overlapped. That is the same class of error as the roadmap's "do not
+    glue lines together", inverted.
+    """
+    p = tmp_path / "straddle.jsonl"
+    chunk = 1 << 20
+    p.write_bytes(b"x" * (chunk - 3) + b"--help" + b"y" * 10)
+    assert discover._contains(p, b"--help") is True
+    assert discover._contains(p, b"--nope") is False
+
+
+# --------------------------------------------- what counts as a probed command
+
+def test_a_multiline_script_does_not_splice_a_command_across_lines(tmp_path):
+    """`\\s` spans newlines, and a Bash call is routinely a multi-line script.
+
+    Measured on the real corpus: `pip3 install --help` was reported as the family
+    `--version pip3 install`, glued across a line break. A detector that invents a command
+    nobody ran is the failure mode this project calls worse than having no detector.
+    """
+    assert detect._family("python3 --version\npip3 install --help") == "pip3 install"
+    assert detect._family("echo hi\ngron --help") == "gron"
+
+
+def test_a_probed_subcommand_keeps_the_command_it_belongs_to(tmp_path):
+    """Leftmost-match punishes a short word limit in a way that is easy to miss.
+
+    At two trailing words, `claude plugin marketplace add --help` cannot match from
+    `claude`, so the match slides right and the family comes out as `plugin marketplace
+    add` — naming a `plugin` executable that does not exist. Observed on the corpus.
+    """
+    assert detect._family("claude plugin marketplace add --help") == \
+        "claude plugin marketplace add"
+    assert detect._family("claude plugin --help") == "claude plugin"
+    assert detect._family("cd /tmp && sudo -A apt-get install --help") == "apt-get install"
+
+
+def test_a_refused_command_was_never_run_so_it_corroborates_nothing(tmp_path):
+    """`here` has always excluded declined calls; the `others` side did not.
+
+    A command the user refused never ran, so its syntax was never re-derived. Counting it
+    on one side only let a probe that never happened corroborate one that did.
+    """
+    recs = [_human("go"), _asst("", calls=[("t1", "Bash", {"command": "gron --help"})]),
+            _result("t1", "usage")]
+    here = transcript.load(write(tmp_path, recs, name="here.jsonl"))
+
+    refused = [_human("go"), _asst("", calls=[("t1", "Bash", {"command": "gron --help"})]),
+               _result("t1", "The user doesn't want to proceed with this tool use", True)]
+    other = transcript.load(write(tmp_path, refused, name="other.jsonl"))
+    assert other.calls[0].declined is True, "fixture check: the harness's refusal wording"
+
+    assert detect.cli_probes(here, [other])["recurring"] == []
 
 
 # --------------------------------------------------------------- robustness

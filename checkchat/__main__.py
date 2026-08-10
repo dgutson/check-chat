@@ -21,7 +21,7 @@ import sys
 import time
 from pathlib import Path
 
-from . import checks, digest, discover, inventory, transcript, verdict
+from . import checks, detect, digest, discover, inventory, transcript, verdict
 
 
 def collect(cwd: str, session_id: str | None = None, siblings: int = 12) -> dict:
@@ -38,7 +38,15 @@ def collect(cwd: str, session_id: str | None = None, siblings: int = 12) -> dict
     if not sess.steps:
         return {"error": "transcript parsed but contains no assistant responses", "path": str(path)}
 
-    others = discover.siblings(cwd, exclude=path, limit=siblings) if siblings else []
+    # Machine-wide, not this directory: the one cross-session check asks whether syntax was
+    # re-derived *before*, and its payoff is a skill, which is per user rather than per
+    # folder. `contains` spends the scan budget only on transcripts that could match —
+    # `detect.PROBE_NEEDLE` is that check's needle, and the coupling is deliberate and
+    # documented in `discover.siblings`, which says what to do when a second one appears.
+    others = discover.siblings(
+        cwd, exclude=path, limit=siblings, contains=detect.PROBE_NEEDLE,
+        exclude_forks_of=sess,
+    ) if siblings else []
     results = checks.run(checks.Context(session=sess, others=others))
 
     out = {
@@ -108,7 +116,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--cwd", default=os.getcwd(), help="directory the session runs in")
     ap.add_argument("--session", default=None, help="session id, if the newest is not the one")
     ap.add_argument("--siblings", type=int, default=12,
-                    help="other sessions to scan for recurring work (0 disables)")
+                    help="how many other sessions on this machine to scan for recurring "
+                         "work, newest first, counting only those that could match "
+                         "(0 disables). Recall of cross-session findings scales with it")
     ap.add_argument("--text", action="store_true", help="human-readable summary instead of JSON")
     ap.add_argument("--digest-only", action="store_true", help="print just the blinded excerpt")
     ap.add_argument("--catalog", action="store_true", help="list registered checks and exit")

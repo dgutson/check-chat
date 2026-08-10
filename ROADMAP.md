@@ -4,10 +4,11 @@ State as of 2026-08-10. Published; see "Done" below. Written so a session with n
 pick it up.
 
 The plugin is **installed and working end-to-end** on this machine: `/check-chat` runs,
-the deterministic pass takes ~50ms, the judge dispatches by `subagent_type`, and the
-report comes back. 56 tests pass, in the project's **own** virtualenv (`.venv/bin/pytest`
-from the repo root). What follows is what is not done, ordered by whether it blocks
-someone other than the author.
+the deterministic pass takes ~280ms (~86ms of it before item 4 made the cross-session
+comparison actually load other sessions; `--siblings 0` returns it to ~20ms), the judge
+dispatches by `subagent_type`, and the report comes back. 64 tests pass, in the project's
+**own** virtualenv (`.venv/bin/pytest` from the repo root). What follows is what is not
+done, ordered by whether it blocks someone other than the author.
 
 Every item says how you would know it is finished. The rule the project is built on
 applies to this list too: **a detector that cannot be shown to fire on real transcripts
@@ -132,24 +133,105 @@ in the excerpt but credited to the wrong speaker passes. Scoping matches to one 
 line was considered and rejected — it would false-fail a `self_consistency` quote that
 legitimately elides across two exchanges, which is the item where that matters most.
 
+**4. `cli_probes` fires — the comparison population was wrong, not the detector**
+(2026-08-10). It was queued for deletion twice under this project's own rule that an
+unfired detector does not ship, and deleting it would have been a mistake. `recurring`
+was 0 on every real session because `others` was every session **in the same project
+directory**, while re-derived CLI syntax is a cross-**project** pattern — you relearn a
+command in whatever repo you happen to be sitting in.
+
+The giveaway is worth keeping, because it generalises past this detector: **the payoff is
+a skill, and a skill is installed per user, not per directory.** The comparison
+population was answering a narrower question than the detector asks. Any future
+cross-session check inherits that reasoning — match the population to the scope of the
+*remedy*, not to the folder you happen to be in.
+
+| scope | sessions firing |
+|---|---|
+| per project directory (as shipped) | **0 of 51** |
+| machine-wide, same detector, same corpus | **8 of 51** |
+
+The top family is `claude plugin`, re-derived in **4 sessions across 4 separate
+projects** — and `plugin-finder` is installed on this machine precisely because that
+syntax is worth not re-deriving, so the finding is independently corroborated by the fix
+already existing. Verified end-to-end through `bin/checkchat`, not just in a unit test:
+`recurring: ["claude plugin"]`, `other_sessions: 3`.
+
+Four things came with it, each measured rather than assumed:
+
+*The pre-filter is correctness, not speed.* `--siblings` bounds the scan, and it used to
+bound it over all candidates, so the budget was spent parsing sessions that could not
+contribute while the ones that could sat outside the window unseen — a silent zero
+indistinguishable from a real one. Only transcripts whose bytes contain `--help` are
+loaded now (18 of 234 here), so every slot goes on a session that might match. Recall
+scales with the flag: 12 finds 3 of the 4 families, 18 finds all 4. The default stays
+12 — spending the same budget better is not the same as tuning a threshold, and item 9
+forbids the latter against this corpus.
+
+*A session's own fork corroborated its own probe.* `exclude` drops one *file*, but
+resuming copies the whole prefix, so the fork is a second file holding the same evidence,
+left in the pool to confirm its original — one session counted twice, arriving by the
+route the path exclusion does not cover. Fixed with `exclude_forks_of`. **This is the
+guard the old item asked to see demonstrated, and the corpus cannot demonstrate it: of 18
+real probing sessions, 0 form a fork family, so removing dedup entirely changes no
+measurement.** A constructed fork in the tests is the only evidence it works, and it has
+a negative control so that "suppresses everything" cannot pass as "suppresses forks".
+
+*Two parse bugs that invented commands nobody ran.* `\s` spans newlines and a Bash call is
+routinely a multi-line script, so `pip3 install --help` was reported as the family
+`--version pip3 install`, spliced across a line break — the roadmap's own "do not glue
+lines together", now for the third time. Separately, leftmost-match plus a two-word limit
+made `claude plugin marketplace add --help` come out as `plugin marketplace add`, naming
+an executable that does not exist. Neither changes what fires; both changed a name shown
+to the user, which for this project is the worse defect.
+
+*A refused command corroborated a real one.* `here` had always excluded declined calls
+and the `others` side had not.
+
+8 new tests, whose positive control is the scope bug itself: the per-directory result is
+asserted to be blind, so a regression restores a measurable zero rather than passing
+quietly.
+
+Cost: the deterministic pass goes from ~86 ms to ~281 ms, and that is the price of the
+comparison actually happening — this directory had only 4 siblings to load, against 12
+probing sessions machine-wide. The scan itself is 12 ms; the rest is parsing. Bounded by
+`--siblings`, and `--siblings 0` still disables it.
+
+Left alone deliberately: `python3 -m rotmeter --help` yields the family `-m rotmeter`,
+because a continuation word must start with a letter so the `python3` head is dropped.
+The name is recognisable, no fix is obviously right, and rejecting flag-led families was
+measured to change nothing (8 of 51 either way). Not worth a guess.
+
 ---
 
-## Now — silent wrongness, in rough order of how quietly it fails
+## Now — re-examine the other zeros before building anything new
 
-**4. `cli_probes` has never fired its cross-session path.** The only entry here, and it
-was deferred once more in favour of item 11 for a stated reason: a detector that never
-fires never makes a false claim. `cli_probes` is dead weight and cutting it is
-bookkeeping, whereas the unchecked-quote hole could put words in the user's mouth. Silent
-dead weight loses to loud wrongness — but it does not stop being dead weight.
+Nothing here is a defect. The queue is empty of silent wrongness for the first time, and
+item 4 is the reason to spend the next slot re-reading old measurements rather than
+writing new detectors.
 
-`probes` counts fine (19 across the corpus) but `recurring` is 0 everywhere, so the
-actionable half — and the fork-dedup guard protecting it, called mandatory when it was
-written — has never been observed working. By this project's own rule that is
-disqualifying for a shipped detector.
-- *Done when:* it fires on a real corpus with the guard demonstrably suppressing a fork,
-  or it is cut
-- Apply item 10's precedent, which is the whole point: **cut it** unless it can be shown
-  to fire. Consistency there matters more than which way this one goes
+**Item 4's zero was the wrong comparison population, not an absent signal**, and it
+survived two rounds of "cut it" because a zero is so much easier to believe than to
+audit. Three other things in this document rest on zeros measured against Daniel's corpus:
+`re_ask` (item 6, zero for both encoder and fallback), the specification checks (item 9,
+"essentially zero re-asking"), and `generic_answer` (item 7, never built but justified by
+the same corpus). Before building any of them, ask item 4's question of each: **is this
+zero the absence of the thing, or the wrong place to look for it?**
+
+- For `re_ask` the population is one conversation, which is the right scope by
+  construction — a re-ask is only a re-ask within a session. That zero looks sound.
+- For item 9 the suspicion is different and worth stating: the corpus is one expert's, so
+  a zero there is a fact about the population, not about the detector. That is already
+  written down. Item 4's lesson does not rescue it, and no amount of re-scoping will —
+  it needs a different user, not a different query.
+- The one worth actually re-running is **`cli_probes`' own sibling question**: now that
+  cross-project comparison exists and is cheap, is any *other* check secretly asking a
+  cross-session question while looking at one session? `producers` and `rereads` are the
+  candidates — a producer re-run across two sessions is the same waste as within one, and
+  nothing looks for it.
+- *Done when:* each of the three has either a stated reason its scope is right, or a
+  re-measurement at the corrected scope. This is bookkeeping on beliefs, not code, and it
+  is cheap compared with building a detector that a corrected zero would have spared.
 
 ---
 
@@ -258,6 +340,16 @@ replacement against, which is what disqualifies it.
 - **`spill` depends on harness English wording** (`Output too large … saved to:`). It will
   break silently if that string changes. The `tool-results/` path pattern is the robust
   half.
+- **One check's needle is held by `__main__`.** `discover.siblings(contains=...)` gets
+  `detect.PROBE_NEEDLE` from the caller, so the sibling scan is pre-filtered for the only
+  cross-session check there is. A second such check wanting different data would be
+  **silently starved** — it would see a filtered population and report a confident zero,
+  which is item 4's failure mode arriving by a new route. That is the moment to make the
+  data requirement something a check declares in the registry, and both docstrings say so
+  at the point where someone would hit it.
+- **`cli_probes` reads other projects' transcripts.** Only the command family crosses the
+  boundary, never file contents, and it stays on the machine — but a report for project A
+  can now name a command probed in project B. `--siblings 0` disables it.
 
 ## The API question, and what items 2 and 11 settled about it
 
@@ -290,6 +382,7 @@ exists.
 | Byte-identical re-read / within-session re-fetch | Verified **0**. Fourteen repeat `Read`s share byte-identical *args*; none share byte-identical *results*, and 12 of 14 had the file edited in between |
 | Compaction as a **drop in context depth** | **0 of 4,155** consecutive measurements above 40k fell at all — depth is strictly monotonic within a session file. The threshold is not the problem; see item 10 before rebuilding this |
 | Quote checking **scoped to one speaker's line** | Rejected on reasoning, not measurement: it false-fails a `self_consistency` quote that elides across two exchanges — the item where cross-exchange quoting is the *point*. Item 11 checks presence, not attribution, deliberately |
+| Cross-session comparison **scoped to one project directory** | The inverse entry: this one was measured to nothing and the measurement was *right about the number and wrong about the cause*. 0 of 51 sessions per-directory, 8 of 51 machine-wide, same detector and same corpus. Do not narrow it back for cost — the pre-filter already bounds that, and the flag exists |
 
 ---
 
@@ -306,4 +399,15 @@ Both cost a full re-run to discover, so they are recorded here rather than relea
 - **Sweeping for text? Do not glue lines together.** Item 11's first measurement reported
   147 false fails, every one of them a sentence the *harness* had spliced across two
   records. When a sweep contradicts working code, suspect the sweep first — this has now
-  happened twice, the other being the `Step.depth` carry-forward in item 10.
+  happened three times: the `Step.depth` carry-forward in item 10, and `\s` spanning a
+  newline inside `_family` in item 4, which invented a command out of two lines of one
+  Bash script. Where a line boundary is meaningful, say `[^\S\n]` and mean it.
+- **A zero is a measurement of the query as much as of the corpus.** The most expensive
+  one yet: `cli_probes` returned 0 across the whole corpus for its entire shipped life,
+  the number was correct every time, and the detector was twice queued for deletion —
+  because the comparison population was one project directory when the question spanned
+  the machine. Nothing about the zero looked wrong. Before believing one, state what
+  population would have to contain the signal and check that is what was searched; the
+  cheap version of that question is *"if this fired, what would the fix be, and is it
+  scoped the same way as my query?"* — a per-user remedy measured per-directory is the
+  tell.

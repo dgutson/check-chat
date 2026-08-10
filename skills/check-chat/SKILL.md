@@ -259,9 +259,14 @@ Ranked by evidence quality. Lead with the first item that fired:
    what makes the honest number credible.
 5. **`spill`** — a result the harness judged too big to keep, read back in anyway. If
    present it is usually n=1; report it as n=1.
-6. **`cli_probes.recurring`** — command syntax re-derived here *and* in other sessions.
-   The strongest "this should be a skill" signal, already fork-deduplicated by the
-   script.
+6. **`cli_probes.recurring`** — command syntax re-derived here *and* in other sessions
+   **anywhere on this machine, not just this project**. The strongest "this should be a
+   skill" signal, already fork-deduplicated by the script, so each corroborating session
+   is a genuinely separate one. Name the family and say how many other sessions probed
+   it: the count is the argument for a skill, and a skill is installed per user, which
+   is why the comparison deliberately crosses projects. `sessions_compared` counts only
+   the sessions that could have matched, so it is not a share of all history — do not
+   report a null as "checked against N sessions" using that number.
 7. **`effort`** — the reasoning-effort setting against the work actually done.
    `overkill_turns` is trivial turns run at `xhigh`/`max`; `circling_turns` is the
    opposite and the more expensive one — a turn that went round in circles at low

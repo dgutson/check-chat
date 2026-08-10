@@ -135,12 +135,15 @@ def _spill(ctx):
 
 
 @register("cli_probes", "opportunity", evidence="descriptive",
-          question="Was command syntax re-derived here and in other sessions?")
+          question="Was command syntax re-derived here and in other sessions on this machine?")
 def _cli(ctx):
     c = detect.cli_probes(ctx.session, ctx.others)
+    # "other probing sessions", not "other sessions": `ctx.others` is pre-filtered to the
+    # transcripts that could match, so reporting it as a share of all sessions would
+    # overstate how much history a null result has actually been checked against.
     return {"fired": bool(c["recurring"]), **c,
             "line": f"cli        {c['probes']} --help probes, {len(c['recurring'])} recurring "
-                    f"across {c['sessions_compared']} sessions"}
+                    f"across {c['sessions_compared']} other probing sessions machine-wide"}
 
 
 @register("effort", "opportunity", evidence="descriptive",

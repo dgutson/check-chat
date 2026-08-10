@@ -52,8 +52,26 @@ _PATHY = re.compile(r"[A-Za-z0-9_./~-]*[A-Za-z0-9_-]\.[A-Za-z0-9]+|[A-Za-z0-9_.~
 _SAVED_TO = re.compile(r"saved to:\s*(\S+)")
 _SPILL_PATH = re.compile(r"tool-results/[\w.-]+\.\w+")
 
+# The substring a transcript must contain before it can possibly hold a probe. Used to
+# pre-filter the corpus in `discover.siblings`, so a bounded scan budget is spent only on
+# sessions that could contribute — see that docstring for why that is correctness, not
+# just speed.
+PROBE_NEEDLE = "--help"
+
 # `foo bar --help`, plus the wrappers that hide the real command name.
-_HELP = re.compile(r"([\w./-]+(?:\s+[a-z][\w-]*){0,2})\s+--help")
+#
+# Horizontal whitespace only, never `\s`: a Bash call is routinely a multi-line script,
+# and `\s` happily spans the newline, splicing the tail of one line onto the `--help` of
+# the next and inventing a command nobody ran. Measured on the corpus: `pip3 install
+# --help` was reported as the family `--version pip3 install`, glued across a line break.
+# The roadmap has this same class of error twice under "do not glue lines together".
+#
+# Three trailing words, not two, because the leftmost-match rule punishes a short limit
+# in a way that is easy to miss: at two, `claude plugin marketplace add --help` cannot
+# match starting at `claude`, so the match slides right and the family comes out as
+# `plugin marketplace add` — a name implying a `plugin` executable that does not exist.
+_H = r"[^\S\n]"
+_HELP = re.compile(rf"([\w./-]+(?:{_H}+[a-z][\w-]*){{0,3}}){_H}+--help")
 _WRAPPERS = re.compile(
     r"^(?:cd\s+\S+\s*(?:&&|;)\s*|sudo\s+(?:-A\s+)?|env\s+\w+=\S+\s+|timeout\s+\S+\s+|nohup\s+)+"
 )
@@ -397,12 +415,29 @@ def _family(cmd: str) -> str:
 def cli_probes(sess: Session, others: list[Session] | None = None) -> dict:
     """Command-line syntax the session had to re-derive by asking for `--help`.
 
-    A family probed in more than one session is the strongest "this should be a
-    skill" signal available, but it is also the easiest to fake: forked transcripts
-    share history, so an undeduplicated corpus manufactures cross-session repeats
-    out of one session counted twice. `others` must already be fork-deduplicated —
-    `discover.siblings()` does that — and this function will not count a family as
-    cross-session on the strength of a single other log.
+    A family probed in more than one session is the strongest "this should be a skill"
+    signal available, but it is also the easiest to fake: forked transcripts share
+    history, so an undeduplicated corpus manufactures cross-session repeats out of one
+    session counted twice. `others` must already be fork-deduplicated —
+    `discover.siblings()` does that.
+
+    **What `others` must contain, and the bug that lived here.** For two years of
+    roadmap this function's cross-session half returned zero on every real session, and
+    it was nearly cut for it. The cause was not this code: `others` was every session
+    *in the same project directory*, and re-derived CLI syntax is inherently a
+    cross-*project* pattern — you relearn `claude plugin` syntax in whatever repo you
+    happen to be sitting in. Note the giveaway, because it is the general lesson: the
+    payoff is a **skill**, and a skill is installed per user, not per directory, so the
+    comparison population was answering a narrower question than the detector asks.
+    Given machine-wide `others` it fires on the same corpus that measured zero — 8 of 51
+    sessions, `claude plugin` re-derived in 4 sessions across 4 separate projects.
+
+    A prior docstring here claimed this "will not count a family as cross-session on the
+    strength of a single other log", i.e. a threshold of two. The code has always said
+    one, so the claim was a guard that did not exist — removed rather than implemented,
+    because the fork protection it was describing is really delivered by the dedup in
+    `siblings()`, and a second unmeasured threshold on top of that is how you get a
+    detector that cannot fire.
     """
     here = Counter()
     for c in sess.calls:
@@ -413,7 +448,11 @@ def cli_probes(sess: Session, others: list[Session] | None = None) -> dict:
 
     across: dict[str, int] = Counter()
     for other in others or []:
-        fams = {_family(_cmd_of(c)) for c in other.calls if c.tool == "Bash"}
+        # `declined` excluded on both sides: a command the user refused was never run,
+        # so its syntax was never re-derived. `here` has always filtered it; this side
+        # did not, which let a refused probe in another session corroborate this one.
+        fams = {_family(_cmd_of(c)) for c in other.calls
+                if c.tool == "Bash" and not c.declined}
         for fam in fams - {""}:
             across[fam] += 1
 
