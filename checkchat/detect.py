@@ -402,9 +402,101 @@ def producers(sess: Session) -> list[dict]:
 
 # ---------------------------------------------------------------- 7. CLI probes
 
+# `<<DELIM`, `<<'DELIM'`, `<<-DELIM` — the start of a heredoc, whose body is data the
+# shell feeds to a command rather than commands the shell runs. Requiring a word
+# character after the `<<` keeps arithmetic left-shift (`$((1 << 2))`) out.
+_HEREDOC = re.compile(r"<<-?\s*(['\"]?)([A-Za-z_][\w-]*)\1")
+
+
+def _shell_code(cmd: str) -> str:
+    """The parts of a Bash command the shell will execute, with *data* removed.
+
+    Found by running `/check-chat` on the session that had just finished repairing this
+    detector, which is the only reason it was found: it reported `pip3 install` as syntax
+    re-derived here *and* in another session, and no such command had been run. `_family`
+    scanned the whole `command` parameter, so text that merely *discusses* a command
+    counted as running it.
+
+    Two kinds of data carry command-shaped text, and both had to go — the first attempt
+    fixed only one and the corpus said so:
+
+    * **Heredoc bodies.** The phantom came from a `git commit -F - <<'EOF'` body: a commit
+      message describing the `--help` parse bug fixed minutes earlier.
+    * **Quoted literals.** Stripping heredocs alone left the firing count unchanged at
+      10 of 18 sessions, because the same phantom arrived again through
+      `echo "=== did I actually run 'pip3 install --help' ... ==="` — a shell label.
+
+    The hole predates the cross-project change, but that change **raised its
+    consequence**: a bogus family used to inflate a count inside one session, and can now
+    manufacture a cross-session "this should be a skill" claim, which is the loudest thing
+    this detector says. Note the shape of the near-miss — the cross-project fix was
+    measured against the corpus, the corpus contained no prose about `--help`, and so
+    nothing failed until the tool was pointed at a session that wrote *about* commands.
+    A corpus cannot contain the artifact a new kind of session will produce.
+    """
+    return _strip_quoted(_strip_heredocs(cmd))
+
+
+def _strip_quoted(cmd: str) -> str:
+    """Replace quoted literals with a space, one line at a time.
+
+    **Line-local on purpose.** An unbalanced quote is ordinary in these commands — an
+    apostrophe in an `echo`, a `sed` expression — and letting the quote state run to the
+    end of a multi-line script would swallow every real command after it. Confined to one
+    line, a mis-pair costs that line and nothing else.
+
+    Command substitution is deliberately not carved out. `$(gron --help)` inside quotes
+    really does run a probe, so stripping it loses a true positive — but there are **0 of
+    those on the corpus** and the carve-out costs a nested parser, so it is left undone
+    and written down here instead of guessed at.
+    """
+    out: list[str] = []
+    for line in cmd.split("\n"):
+        buf: list[str] = []
+        quote = ""
+        i = 0
+        while i < len(line):
+            ch = line[i]
+            if quote:
+                if ch == "\\" and quote == '"':      # \" does not close a double quote
+                    i += 2
+                    continue
+                if ch == quote:
+                    quote = ""
+                    buf.append(" ")                  # the literal becomes a word boundary
+                i += 1
+                continue
+            if ch in "'\"":
+                quote = ch
+                i += 1
+                continue
+            buf.append(ch)
+            i += 1
+        out.append("".join(buf))
+    return "\n".join(out)
+
+
+def _strip_heredocs(cmd: str) -> str:
+    """Drop heredoc bodies, keeping the lines that actually execute."""
+    lines = cmd.split("\n")
+    out: list[str] = []
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        out.append(line)
+        # One line may open several heredocs; their bodies then follow in that order.
+        delims = [m.group(2) for m in _HEREDOC.finditer(line)]
+        i += 1
+        for delim in delims:
+            while i < len(lines) and lines[i].strip() != delim:
+                i += 1
+            i += 1                      # and the terminator line itself
+    return "\n".join(out)
+
+
 def _family(cmd: str) -> str:
-    """The command family behind a `--help`, with wrappers stripped."""
-    stripped = _WRAPPERS.sub("", cmd.strip())
+    """The command family behind a `--help`, looking only at what the shell would run."""
+    stripped = _WRAPPERS.sub("", _shell_code(cmd).strip())
     m = _HELP.search(stripped)
     if not m:
         return ""

@@ -1016,6 +1016,55 @@ def test_a_probed_subcommand_keeps_the_command_it_belongs_to(tmp_path):
     assert detect._family("cd /tmp && sudo -A apt-get install --help") == "apt-get install"
 
 
+def test_prose_about_a_command_is_not_a_command_that_ran(tmp_path):
+    """The phantom probe, found by running /check-chat on the session that fixed this.
+
+    `_family` scanned the whole Bash `command` parameter, so a commit message *describing*
+    a `--help` parse bug counted as having run one — and with cross-project comparison
+    live, it manufactured `recurring: ["pip3 install"]`, a "this should be a skill" claim
+    for a command nobody invoked.
+
+    Both routes get a case, because fixing only the heredoc left the corpus firing count
+    unchanged: the same phantom came back through a shell label.
+    """
+    heredoc = (
+        "git commit -q -F - <<'EOF'\n"
+        "detect: stop splicing across newlines\n"
+        "`pip3 install --help` was reported as the family `--version pip3 install`.\n"
+        "EOF"
+    )
+    assert detect._family(heredoc) == ""
+
+    label = 'echo "=== did I actually run \'pip3 install --help\' this session? ==="'
+    assert detect._family(label) == ""
+
+
+def test_a_real_probe_survives_the_data_stripping(tmp_path):
+    """The negative control. A guard that suppressed everything would pass the test above
+    while leaving the detector as dead as the roadmap twice thought it was.
+
+    Both shapes are taken from real corpus commands: a probe on a later line of a
+    multi-line script, and a probe on the *same* line as a quoted label preceding it.
+    """
+    assert detect._family('echo "=== CLI surface ==="\ngron --help') == "gron"
+    assert detect._family('echo "=== surface ==="; python3 -m rotmeter --help') == \
+        "-m rotmeter"
+    assert detect._family('echo "=== setup.sh --help ==="\nbash ./scripts/setup.sh --help') \
+        == "setup.sh"
+    assert detect._family("cat <<'EOF' > /tmp/x\nnot a command --help\nEOF\ngron --help") \
+        == "gron", "a probe after the heredoc closes is still a probe"
+
+
+def test_an_unbalanced_quote_costs_its_own_line_and_no_more(tmp_path):
+    """Quote stripping is line-local, and this is the reason.
+
+    An apostrophe in an `echo` is ordinary. If the quote state ran to the end of a
+    multi-line script it would swallow every command after it — turning one stray
+    character into a silent zero for the rest of the call.
+    """
+    assert detect._family("echo don't do that\ngron --help") == "gron"
+
+
 def test_a_refused_command_was_never_run_so_it_corroborates_nothing(tmp_path):
     """`here` has always excluded declined calls; the `others` side did not.
 

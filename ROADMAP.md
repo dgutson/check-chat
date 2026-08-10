@@ -251,12 +251,60 @@ option, not a defect.
 
 ---
 
+**13. Prose about a command is no longer counted as running it** — `_shell_code`
+(2026-08-10). `cli_probes` reported `recurring: ["pip3 install"]` on the session that had
+just finished repairing it, and no such command had been run. `_family` scanned the whole
+Bash `command` parameter, so text that merely *discusses* a command counted as a probe.
+With item 4's cross-project comparison live this was no longer a harmless miscount: it
+manufactured a **"this should be a skill" claim for a command nobody invoked**, which is
+the loudest thing this detector says.
+
+Two kinds of data carry command-shaped text, and **fixing one was not enough** — the
+first attempt stripped heredoc bodies, and the corpus firing count did not move at all
+(10 of 18, unchanged), because the same phantom arrived again by a second route:
+
+| route | the text | verdict |
+|---|---|---|
+| heredoc body | `git commit -F - <<'EOF'` carrying a commit message *about* the `--help` parse bug fixed minutes earlier | data |
+| quoted literal | `echo "=== did I actually run 'pip3 install --help' … ==="` — a shell label | data |
+
+So the unit is now "the parts of the command the shell will execute", with both stripped.
+Measured before and after: **10 of 18 probing sessions fire → 8 of 18**, and the two lost
+firings are exactly the phantom. **No real family is lost** — `claude plugin` 4,
+`claude` 4, `claude plugin marketplace` 2, `claude plugin install` 2, unchanged — and
+`pip3 install` drops from 2 sessions to 1, the one that genuinely ran it.
+
+Quote stripping is **line-local**, because an unbalanced quote is ordinary in these
+commands (an apostrophe in an `echo`, a `sed` expression) and a quote state running to the
+end of a multi-line script would swallow every command after it — one stray character
+buying a silent zero for the rest of the call. Command substitution is deliberately not
+carved out: `$(gron --help)` inside quotes really is a probe, but there are **0 of those
+in the corpus** (measured, not assumed) and the carve-out costs a nested parser.
+
+3 tests, and the negative control is the point — a guard that suppressed everything would
+pass the phantom test while leaving the detector as dead as items 4 and 12 twice thought
+it was. So a probe on a later line, a probe on the same line *after* a quoted label, and a
+probe after a heredoc closes are all asserted to survive.
+
+**What this says about measuring against a corpus, and it is the lesson worth keeping.**
+Item 4's fix was measured against 234 transcripts and was right about every one of them.
+The corpus contained no prose about `--help`, so the hole could not show up in it — and it
+appeared within the hour, as soon as the tool was pointed at a session that wrote *about*
+commands rather than running them. **A corpus cannot contain the artifact that a new kind
+of session will produce**, so a clean sweep is evidence about the past, not a proof of
+correctness. Two of this project's checks now exist because it was run on itself; that is
+the cheapest source of novel input it has, and it should be run on the session that
+changes it, every time.
+
+---
+
 ## Now — nothing, and that is a measured statement
 
 Every check has been audited for item 4's failure (item 12), no defect is outstanding, and
 the three remaining features are each blocked or undesigned. The unblocked one is **item 8**
 — the counting dimension has no open-world escape hatch at all, which is the shape of hole
-item 4 sat in. Read item 12's rule before touching any of them.
+item 4 sat in. Read item 12's rule before touching any of them, and item 13 before
+trusting a corpus sweep.
 
 ---
 
@@ -434,6 +482,12 @@ Each cost a full re-run to discover, so they are recorded here rather than relea
   happened three times: the `Step.depth` carry-forward in item 10, and `\s` spanning a
   newline inside `_family` in item 4, which invented a command out of two lines of one
   Bash script. Where a line boundary is meaningful, say `[^\S\n]` and mean it.
+- **A clean sweep is evidence about the past, not a proof.** Item 4's parse fix was
+  measured against 234 transcripts and was right about all of them; the corpus simply
+  contained no prose *about* `--help`, so item 13's phantom could not appear in it, and did
+  appear within the hour on a session that wrote commit messages about commands. Ask what
+  kind of session the corpus does not contain — and run this tool on the session that
+  changes it, which is how two of its checks were found.
 - **A zero is a measurement of the query as much as of the corpus.** The most expensive
   one yet: `cli_probes` returned 0 across the whole corpus for its entire shipped life,
   the number was correct every time, and the detector was twice queued for deletion —
