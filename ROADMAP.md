@@ -202,36 +202,61 @@ because a continuation word must start with a letter so the `python3` head is dr
 The name is recognisable, no fix is obviously right, and rejecting flag-led families was
 measured to change nothing (8 of 51 either way). Not worth a guess.
 
+**12. Every check audited for item 4's failure — and the rule that decides it**
+(2026-08-10). Item 4's zero survived two rounds of "cut it" because a zero is easier to
+believe than to audit, so the immediate follow-up was to ask the same question of every
+other check before writing anything new: **is this measured over the population its own
+remedy lives in?**
+
+**The rule, which answers it without measuring anything:**
+
+> Re-scoping a check to the machine is safe only when its evidence does not depend on
+> state that changes between sessions.
+
+A `--help` probe is proof of not-knowing *whatever* is on disk, so it survives the trip
+across sessions intact. That is why item 4 worked, and it is not a general property.
+
+Audited by asking what each check's remedy is and what scope that remedy lives at. Ten are
+sound by construction — `partial_use`, `dumps`, `rereads`, `spill`, `batching`,
+`grounding`, `sycophancy`, `continuity`, `failures` all rest on within-session
+observables, and `specification` is already correctly filed under item 9 as a wrong-
+*population* problem that no re-scoping fixes. Two looked like item 4 and were measured:
+
+**`producers` — flagged, and the rule says no.** Its remedy is a cached artifact or a
+script, which is per-user, so the shape matched exactly. But its two guards are named
+load-bearing in its own docstring, and **the strong one cannot exist across sessions**:
+"no intervening mutation" is a within-session observable, because arbitrary time passes
+between sessions and files certainly change. Cross-session it would keep the weak guard
+(the filter varies) and lose the one that matters. Measured, and the result is not
+ambiguous — 8 producer heads run in ≥2 sessions with varying filters, and they are
+`.venv/bin/pytest -q`, `python3 -m pytest tests/`, `./test.sh`, `python3 -m venv .venv`,
+`gh auth status`, plus three `--help` probes already counted by `cli_probes`. That is
+**precisely the list the within-session guards exist to suppress** — the docstring names
+`pytest | tail` and `./test.sh` by hand. Against 2 real within-session findings in the
+whole corpus. The crude variant is just as empty: an identical full Bash command appears
+in ≥2 sessions **5 times out of 1,258**, three of them `ls -la`, `sed -n`, `./test.sh`.
+
+**`effort` — flagged, and it is not blind.** Remedy is a per-user setting, but the
+evidence is per-turn and already sufficient per session: 13 of 51 sessions show any
+overkill or circling, and the ones that matter already fire (top session 12 overkill
+turns). Corpus totals are overkill 33, circling 5, mix `{max 51, xhigh 74, high 56,
+medium 28}`. Aggregating across sessions would *strengthen* the recommendation — "you do
+this habitually" beats "you did it twelve times" — but it fixes no blindness and it would
+mean setting a threshold against Daniel's corpus, which item 9 forbids. Filed as an
+option, not a defect.
+
+- *Done.* No code changed, which is the point: the audit's output is a rule and three
+  recorded verdicts, and it cost far less than the detector a corrected zero would have
+  spared
+
 ---
 
-## Now — re-examine the other zeros before building anything new
+## Now — nothing, and that is a measured statement
 
-Nothing here is a defect. The queue is empty of silent wrongness for the first time, and
-item 4 is the reason to spend the next slot re-reading old measurements rather than
-writing new detectors.
-
-**Item 4's zero was the wrong comparison population, not an absent signal**, and it
-survived two rounds of "cut it" because a zero is so much easier to believe than to
-audit. Three other things in this document rest on zeros measured against Daniel's corpus:
-`re_ask` (item 6, zero for both encoder and fallback), the specification checks (item 9,
-"essentially zero re-asking"), and `generic_answer` (item 7, never built but justified by
-the same corpus). Before building any of them, ask item 4's question of each: **is this
-zero the absence of the thing, or the wrong place to look for it?**
-
-- For `re_ask` the population is one conversation, which is the right scope by
-  construction — a re-ask is only a re-ask within a session. That zero looks sound.
-- For item 9 the suspicion is different and worth stating: the corpus is one expert's, so
-  a zero there is a fact about the population, not about the detector. That is already
-  written down. Item 4's lesson does not rescue it, and no amount of re-scoping will —
-  it needs a different user, not a different query.
-- The one worth actually re-running is **`cli_probes`' own sibling question**: now that
-  cross-project comparison exists and is cheap, is any *other* check secretly asking a
-  cross-session question while looking at one session? `producers` and `rereads` are the
-  candidates — a producer re-run across two sessions is the same waste as within one, and
-  nothing looks for it.
-- *Done when:* each of the three has either a stated reason its scope is right, or a
-  re-measurement at the corrected scope. This is bookkeeping on beliefs, not code, and it
-  is cheap compared with building a detector that a corrected zero would have spared.
+Every check has been audited for item 4's failure (item 12), no defect is outstanding, and
+the three remaining features are each blocked or undesigned. The unblocked one is **item 8**
+— the counting dimension has no open-world escape hatch at all, which is the shape of hole
+item 4 sat in. Read item 12's rule before touching any of them.
 
 ---
 
@@ -253,6 +278,11 @@ fallback otherwise, and say in the output which ran. Do not make it a hard depen
 stdlib-only is a real property worth keeping. **Measure whether the encoder beats the
 fallback before taking the dependency**; on Daniel's corpus both score zero and are
 indistinguishable.
+
+Audited under item 12 and its zero is *not* item 4's: a re-ask is only a re-ask within one
+conversation, so one session is the right population by construction, and no re-scoping
+would change the number. What blocks this is item 9 — the wrong user, not the wrong query.
+Same verdict for item 7, which is justified by the same corpus.
 
 **7. `generic_answer` — TF-IDF against the repo's own vocabulary.**
 "Is this answer about *this* codebase, or a tutorial?" No neural net needed. Proposed,
@@ -383,12 +413,14 @@ exists.
 | Compaction as a **drop in context depth** | **0 of 4,155** consecutive measurements above 40k fell at all — depth is strictly monotonic within a session file. The threshold is not the problem; see item 10 before rebuilding this |
 | Quote checking **scoped to one speaker's line** | Rejected on reasoning, not measurement: it false-fails a `self_consistency` quote that elides across two exchanges — the item where cross-exchange quoting is the *point*. Item 11 checks presence, not attribution, deliberately |
 | Cross-session comparison **scoped to one project directory** | The inverse entry: this one was measured to nothing and the measurement was *right about the number and wrong about the cause*. 0 of 51 sessions per-directory, 8 of 51 machine-wide, same detector and same corpus. Do not narrow it back for cost — the pre-filter already bounds that, and the flag exists |
+| **`producers` across sessions** | 8 heads in ≥2 sessions, and every one of them is `pytest`, `./test.sh`, `venv`, `gh auth status` or a `--help` already counted elsewhere — the exact list the within-session guards were written to suppress. The "no intervening mutation" guard **cannot exist** at that scope. Identical full command in ≥2 sessions: 5 of 1,258. See item 12's rule |
+| **Same file re-read in many sessions** ("it should be in CLAUDE.md") | Measured, and the base rate is real — 36 of 132 files read in ≥2 sessions — but the interpretation inverts. The five most re-read files are `HANDOFF.md`, `ROADMAP.md`, `CLAUDE.md`, `README.md` and the project's main source file, at 5 sessions each. Those are **orientation files being used for orientation**; a fresh session has no memory and re-reading them is the correct behaviour, not waste. There is no remedy to recommend |
 
 ---
 
-## Measuring against the corpus — two ways to get a false answer
+## Measuring against the corpus — ways to get a false answer
 
-Both cost a full re-run to discover, so they are recorded here rather than relearned.
+Each cost a full re-run to discover, so they are recorded here rather than relearned.
 
 - **`cd x && grep */*.jsonl` fails silently in the tool environment.** The `cd` does not
   persist and the glob expands in the wrong directory, so it reports nothing and looks
