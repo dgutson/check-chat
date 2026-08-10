@@ -174,13 +174,20 @@ checkout without installing, use `PYTHONPATH=. python3 -m checkchat` instead.
 ## Tests
 
 ```bash
-pytest tests/
+python3 -m venv .venv && .venv/bin/pip install -e '.[dev]'
+.venv/bin/pytest
 ```
 
-They cover the four wire-format traps that silently corrupt every count if mishandled
+No runtime dependencies — `pytest` is the only dev extra, and `dependencies` in
+`pyproject.toml` is empty on purpose: this has to run inside whatever environment the
+session under test already has.
+
+They cover the five wire-format traps that silently corrupt every count if mishandled
 (one response spanning several records; tool results wearing a `user` role; subagent
-sidechains; a user-declined call flagged as an error), plus a positive control for
-sycophancy.
+sidechains; a user-declined call flagged as an error; an interruption marker becoming a
+turn nobody typed), plus a positive control for sycophancy — which the development
+corpus measures at zero, so a detector never observed to fire would be
+indistinguishable from a broken one.
 
 ## License
 

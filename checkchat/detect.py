@@ -481,7 +481,42 @@ def failures(sess: Session) -> dict:
     }
 
 
+# --------------------------------------------------- 10. completeness of the record
+
+def continuity(sess: Session) -> dict:
+    """Was the whole transcript read, or is every count above computed on a fragment?
+
+    A transcript past the read cap is read from its **tail**, so every count is then
+    computed on the remainder while looking exactly like a count over the whole thing.
+    That was true from the first version and reported nowhere, which is the worst of
+    the three available states: measured, wrong, and confident.
+
+    This is not a detector and cannot be wrong: the condition is `size > cap`, a fact
+    this tool creates about its own read. It reports magnitude rather than a boolean
+    because "truncated" with no number invites the reader to assume it was marginal.
+
+    A **compaction** clause lived here too, and was cut for lack of evidence rather
+    than lack of value — the mechanism is real and the reasoning about it is preserved
+    in the roadmap. Nothing detects it today, so nothing claims to.
+    """
+    dropped_mb = sess.dropped_bytes / (1024 * 1024)
+    warnings = []
+    if sess.truncated:
+        warnings.append(
+            f"transcript truncated: the first {dropped_mb:,.1f} MB were never read — "
+            f"every count here is a lower bound computed on the remainder"
+        )
+    return {
+        "fired": bool(sess.truncated),
+        "truncated": sess.truncated,
+        "dropped_bytes": sess.dropped_bytes,
+        "warnings": warnings,
+        "summary": "; ".join(warnings) or "whole transcript read",
+    }
+
+
 __all__ = [
     "dumps", "dump_reason", "partial_use", "rereads", "mutation_index",
     "batching", "spill", "producers", "cli_probes", "grounding", "failures",
+    "continuity",
 ]

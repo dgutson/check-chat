@@ -1,12 +1,12 @@
 # Roadmap
 
-State as of 2026-08-09. Published; see "Done" below. Written so a session with no memory of how this got here can
+State as of 2026-08-10. Published; see "Done" below. Written so a session with no memory of how this got here can
 pick it up.
 
 The plugin is **installed and working end-to-end** on this machine: `/check-chat` runs,
-the deterministic pass takes ~40ms, the judge dispatches by `subagent_type`, and the
-report comes back. 33 tests pass. What follows is what is not done, ordered by whether
-it blocks someone other than the author.
+the deterministic pass takes ~50ms, the judge dispatches by `subagent_type`, and the
+report comes back. 47 tests pass, in the project's **own** virtualenv. What follows is
+what is not done, ordered by whether it blocks someone other than the author.
 
 Every item says how you would know it is finished. The rule the project is built on
 applies to this list too: **a detector that cannot be shown to fire on real transcripts
@@ -18,7 +18,8 @@ does not ship**, and one that fires in most sessions is a ranking, not an alarm.
 
 **1. Published to `github.com/dgutson/check-chat`** — public, MIT, 2026-08-09.
 Verified from a fresh clone: manifests validate, `bin/checkchat` runs with no install
-and no environment variable, 33 tests pass. The plugin is no longer tied to one machine.
+and no environment variable, and the 33 tests of the day passed. The plugin is no longer
+tied to one machine.
 
 Still open from that work: the author's own install is still the *local-path* marketplace
 (`installLocation: /home/daniel/src/check-chat`), so his edits go live without a
@@ -40,17 +41,64 @@ Still open: nothing validates that quoted evidence *actually appears in the exce
 A judge could quote something plausible that was never said, and neither the validator
 nor the reporting step would notice.
 
+**3. `truncated` is consumed; `compactions` is gone** — `continuity`,
+`evidence="caveat"` (2026-08-10). "Computed and consumed by nothing" has two honest
+fixes, and the two halves earned opposite ones:
+
+*Truncation ships.* A transcript over the 24 MB cap is read from its tail, and every
+count was then computed on the remainder with nothing saying so. `continuity` now
+reports it with its **magnitude** — a bare boolean invites the reader to assume it was
+marginal — the `--text` header carries `[PARTIAL]`, and the skill is told the dimension-3
+totals are a lower bound on a fragment. This is not a detector and cannot be wrong: the
+condition is `size > cap`, a fact the tool creates about its own read. 4 tests, whose
+positive control is a real transcript with the cap lowered — same code path, real
+records, only the threshold moved.
+
+*Compaction was cut* rather than consumed, and 10 was opened for it. Detail there; the
+short version is 0 observations in 4,155 measurements, so by this project's own rule it
+was not shippable and the honest fix for "computed and consumed by nothing" was to stop
+computing it.
+
+It also added a seventh `evidence` tier, **`caveat`** — a finding that qualifies every
+other number rather than adding to them, so the renderer hoists it *above* the counts it
+invalidates and the skill reports it before the dimensions. Selected by tier, never by
+name, so the next check of that kind needs no edit. A caveat printed underneath the
+numbers it invalidates has already failed at its one job.
+
+**4a. Trap 5 — the interruption marker was a turn nobody typed** (2026-08-10).
+Found by running `/check-chat` on its own session, which is the only reason it was found:
+the judge scored sycophancy 0 having located the one real pushback moment in the excerpt,
+while the Python handed it **zero candidates**. That disagreement was the tell.
+
+The harness writes `[Request interrupted by user for tool use]` as a `user` record of its
+own — **15 of them across 9 sessions** in the corpus. `clean()` did not strip it, so it
+became a turn, and the inflated denominator was the harmless half. The phantom sat
+*between* the reply and the objection that followed it, so `sycophancy` discarded the
+phantom (a short interjection with no reply after it) and then rejected the genuine
+objection for being preceded by an empty reply. **Interrupting a tool call and then
+pushing back is the highest-signal sycophancy moment there is, and this returned a
+confident zero for it** — the failure mode the README calls worse than having no
+detector.
+
+One line in `_STRIP`, two regression tests, and verified on the session that exposed it:
+candidates 0 → 1, the promoted one being the real objection. Worth noting how it was
+caught, because no unit test would have: the phantom only appears when a human interrupts,
+which no fixture did, and the *first* symptom was two independent measurements of the same
+session disagreeing.
+
+**5. `pyproject.toml`** (2026-08-10). `pip install -e '.[dev]' && pytest` now works from
+a clean checkout, verified from a copy of the tree in an empty venv: bare `pytest` finds
+the suite via `testpaths`, and the install puts `checkchat` on `PATH` the same way the
+plugin's `bin/` launcher does.
+
+Before this the tests borrowed **rot-metrics'** virtualenv, because the system Python has
+no pytest and that neighbouring project had one. check-chat has never had any dependency
+on rot-metrics — no import, no shared code — so this was pure machine-local accident
+masquerading as a toolchain. `dependencies` is empty and should stay empty.
+
 ---
 
 ## Now — silent wrongness, in rough order of how quietly it fails
-
-**3. `compactions` and `truncated` are computed and consumed by nothing.**
-`transcript.py` detects both. No check reads either, and the report never mentions them.
-Consequences today: a **compacted** session's digest silently spans the compaction
-boundary as though it were continuous, and a transcript over 24 MB is silently
-tail-truncated with every count computed on the remainder. Both produce confidently
-wrong numbers with no warning.
-- *Done when:* the summary says so, and the judge is told the excerpt may straddle a gap
 
 **4. `cli_probes` has never fired its cross-session path.**
 `probes` counts fine (19 across the corpus) but `recurring` is 0 everywhere, so the
@@ -59,11 +107,6 @@ mandatory — has never been observed working. By this project's own rule that i
 disqualifying for a shipped detector.
 - *Done when:* it fires on a real corpus with the guard demonstrably suppressing a fork,
   or it is cut
-
-**5. No `pyproject.toml`.**
-Tests currently borrow `rot-metrics`' venv because system Python has no pytest. Fine for
-one machine, hostile to a contributor.
-- *Done when:* `pip install -e '.[dev]' && pytest` works from a clean checkout
 
 ---
 
@@ -109,6 +152,53 @@ establishes no base rate and no threshold for the population these were built fo
   the detectors are quiet for an expert, which is the correct behaviour and not evidence
   of anything else.
 
+**10. Compaction awareness.** Built, measured, and cut on 2026-08-10 — kept here because
+the *reasoning* survives the measurement and is the expensive half to rediscover.
+
+**Why it matters.** After a compaction the assistant holds a summary, not the text. So
+re-asking for something settled before the seam is **correct behaviour, not `confusion`**,
+and a constraint from before it was *lost*, not disregarded. Same observation, different
+defect, and — the part that pays — a different repair: **restating the constraint fixes a
+compaction loss; starting a fresh chat does not.** A judge that cannot see the seam scores
+amnesia as degradation, which is the exact false positive this whole plugin exists to
+avoid.
+
+**Why it was cut.** The implementation read a large drop in context depth as a
+compaction. Measured across 232 transcripts:
+
+| measurement | result |
+|---|---|
+| Consecutive depth measurements above the 40k floor | **4,155** |
+| …where depth fell below the 0.6 threshold | **0** |
+| …where depth fell *at all* (ratio < 1.0) | **0** |
+| Compaction markers of any kind in the wire format | **0** — no key matching `compact`, no `type: "summary"` record |
+| Session files that *begin* deep, i.e. as a continuation | **0** — first-response depth spans 13k–44k, ceiling 44,487 |
+| Transcripts within 4x of the 24 MB read cap | **0** — largest 6.0 MB |
+
+Depth inside a session file is **strictly monotonic, without exception**. Note carefully
+what that does and does not establish: the corpus never compacts (deepest session 682k
+tokens in a 1M window), so this is **zero observations, not a measured failure** — it
+cannot distinguish "the rule is right and never triggered" from "the rule watches for
+something this format never shows". Either way there is no ground truth to check a
+replacement against, which is what disqualifies it.
+
+- *Unblocks when:* one compacted transcript exists — deliberately produce one by running
+  a session to compaction on a small context window, and keep the file
+- *When it does:* the first-response-depth signal is the cheap one to try, because it is
+  already measured. A ceiling of 44,487 over 50 sessions means a `> 60_000` first-response
+  threshold has **zero false positives on the corpus today** — but confirm against the
+  real file rather than assuming, since a compaction continuation might reasonably start
+  *shallow* (a fresh summary) rather than deep
+- **Do not re-tune the 0.6 depth-drop threshold.** 4,155 of 4,155 rose. The threshold was
+  never the problem
+- The pieces are small and their reasoning is recorded where it will be found: the
+  detection note in `transcript.py`, the excerpt marker in `digest.py`'s docstring, and
+  the `caveat` tier in `checks.py` is already built and shipping. The judge guidance was
+  three rules — `confusion` → 0 across the seam, `constraint_retention` → still a finding
+  but say it straddles the seam, `self_consistency` → amnesia rather than contradiction —
+  and it was cut from the prompt because ~25 lines read on every dispatch for an event
+  never observed is a poor trade, not because it was wrong
+
 ---
 
 ## Known limitations — accepted and documented, not bugs to fix
@@ -150,3 +240,4 @@ exists.
 | Recency bias, semantic drift, anchor loss, terminology mutation | All die against a null. A within-session **shuffle reproduces the trend identically**; own-anchor containment is flat (0.102 / 0.086 / 0.093 / 0.112). rot-metrics already built, measured (AUC 0.49–0.53) and disabled this exact detector |
 | Generic recurring tool-call sequence miner | Exactly **zero**. Of 684 consecutive-Bash trigrams, 7 repeat anywhere and **0 across sessions**. The naive version looks like it works — every apparent hit is the duplicate-log artifact the fork-dedup guard exists to remove |
 | Byte-identical re-read / within-session re-fetch | Verified **0**. Fourteen repeat `Read`s share byte-identical *args*; none share byte-identical *results*, and 12 of 14 had the file edited in between |
+| Compaction as a **drop in context depth** | **0 of 4,155** consecutive measurements above 40k fell at all — depth is strictly monotonic within a session file. The threshold is not the problem; see item 10 before rebuilding this |

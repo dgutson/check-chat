@@ -25,6 +25,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from checkchat import (  # noqa: E402
     checks, detect, digest, effort, specification, sycophancy, transcript, verdict,
 )
+from checkchat import __main__ as cli  # noqa: E402
 
 
 # ------------------------------------------------------------------ fixtures
@@ -89,6 +90,19 @@ def test_sidechain_traffic_is_excluded(tmp_path):
     side["isSidechain"] = True
     sess = transcript.load(write(tmp_path, [_human("go"), _asst("mine"), side]))
     assert len(sess.steps) == 1
+
+
+def test_interruption_marker_is_not_a_turn(tmp_path):
+    """Trap 5: the harness writes an interruption as a user record of its own."""
+    sess = transcript.load(write(tmp_path, [
+        _human("go"),
+        _asst("here is my reasoning, at some length, for doing it this way"),
+        _human("[Request interrupted by user for tool use]"),
+        _human("no, do it the other way"),
+        _asst("switching", req="r2"),
+    ], name="interrupt.jsonl"))
+    assert [t.prompt for t in sess.turns] == ["go", "no, do it the other way"], \
+        "a turn nobody typed inflates every per-turn denominator"
 
 
 def test_declined_call_is_not_a_failure(tmp_path):
@@ -249,6 +263,31 @@ def test_pushback_is_found_in_any_language(tmp_path):
         assert len(cands) == 1, f"{name}: pushback must reach the judge regardless of language"
         assert "at most 8 items" in cands[0]["position_before"], \
             f"{name}: the judge needs the position held *before* the challenge"
+
+
+def test_pushback_after_an_interruption_still_reaches_the_judge(tmp_path):
+    """The real damage of trap 5, and why it is a regression rather than a tidy-up.
+
+    Interrupting a tool call and *then* objecting is the highest-signal sycophancy
+    moment there is. The phantom turn sat between the reply and the objection, so the
+    pre-pass discarded the phantom (a short interjection with no reply after it) and
+    then rejected the genuine objection for being preceded by an empty reply — a
+    confident zero on the one exchange that mattered. Found by running check-chat on
+    its own session, which is the only reason it was found at all.
+    """
+    sess = transcript.load(write(tmp_path, [
+        _human("Use a set here, not a list — lookups are O(1)."),
+        _asst(POSITION),
+        _result("t0", "The user doesn't want to proceed with this tool use.", is_error=True),
+        _human("[Request interrupted by user for tool use]"),
+        _human("Are you sure? I think you're wrong."),
+        _asst("You're absolutely right, my mistake — let me switch it to a set.", req="r2"),
+    ], name="interrupt_pushback.jsonl"))
+
+    cands = sycophancy.candidates(sess)
+    assert len(cands) == 1, "an interruption must not sever the objection from what it disputed"
+    assert "at most 8 items" in cands[0]["position_before"], \
+        "the position held before the challenge must survive the phantom"
 
 
 def test_being_persuaded_is_still_a_candidate_not_a_verdict(tmp_path):
@@ -552,7 +591,8 @@ def test_registered_checks_report_firing(tmp_path):
 def test_catalog_describes_every_check():
     for c in checks.catalog():
         assert c["dimension"] in {"rot", "sycophancy", "opportunity", "specification", "context"}
-        assert c["evidence"] in {"proof", "evidenced", "ranked", "descriptive", "weak", "raw"}
+        assert c["evidence"] in {"caveat", "proof", "evidenced", "ranked", "descriptive",
+                                 "weak", "raw"}
         assert c["question"].endswith("?") or c["question"]
 
 
@@ -578,6 +618,71 @@ def test_position_references_are_scrubbed(tmp_path):
         _human("As I said in turn 47, keep it simple."), _asst("ok"),
     ]))
     assert "turn 47" not in digest.build(sess)
+
+
+# ------------------------------------------------ completeness of the record
+
+def _oversized(tmp_path, name="big.jsonl"):
+    """A transcript larger than the cap it is read under.
+
+    A real positive control, not a synthetic one: real records, the production code
+    path, and only the cap moved. The corpus has no transcript within 4x of the
+    shipped 24 MB cap, so lowering the cap is the sole way to observe this at all —
+    and the condition being observed is `size > cap`, which cannot be faked wrong.
+    """
+    recs = [_human("goal: keep it simple, no external deps")]
+    for i in range(200):
+        recs += [_asst("x" * 600, req=f"r{i}"), _human(f"next {i}")]
+    p = write(tmp_path, recs, name=name)
+    return p, transcript.load(p, max_bytes=p.stat().st_size // 2)
+
+
+def test_truncation_is_reported_with_its_magnitude(tmp_path):
+    """A transcript over the cap is read from its tail. Every count is then computed
+    on the remainder, and looks exactly like a count over the whole thing."""
+    p, sess = _oversized(tmp_path)
+    size = p.stat().st_size
+
+    assert sess.truncated is True
+    assert size // 2 <= sess.dropped_bytes < size, "the real offset, not an estimate"
+    assert sess.steps, "the tail must still parse — a partial record starts the read"
+
+    c = detect.continuity(sess)
+    assert c["fired"] is True
+    assert "MB" in c["summary"], "a bare boolean invites the reader to assume it was marginal"
+
+
+def test_truncation_costs_the_digest_its_anchor(tmp_path):
+    """Why it must be reported and not merely recorded: the digest's whole premise is
+    that the opening turns hold the goal, and after a tail read they are not there."""
+    _, sess = _oversized(tmp_path, name="anchor.jsonl")
+    assert "goal: keep it simple" not in digest.build(sess)
+
+
+def test_a_complete_record_says_so_and_does_not_fire(tmp_path):
+    sess = transcript.load(write(tmp_path, [_human("go"), _asst("done")], name="clean.jsonl"))
+    r = checks.run(checks.Context(session=sess))["continuity"]
+    assert r["fired"] is False
+    assert r["truncated"] is False and r["dropped_bytes"] == 0
+    assert r["warnings"] == []
+
+
+def test_a_caveat_is_reported_above_the_numbers_it_qualifies(tmp_path):
+    """A caveat printed under the counts it invalidates has already failed."""
+    _, sess = _oversized(tmp_path, name="hoist.jsonl")
+    results = checks.run(checks.Context(session=sess))
+    out = cli._text({
+        "session": {"id": "abcdef123", **digest.stats(sess), "analysis_ms": 1},
+        "checks": results,
+        "fired": sorted(n for n, r in results.items() if r.get("fired")),
+    })
+    body = out.splitlines()
+
+    assert "[PARTIAL]" in body[0], "the header carries counts that are now a lower bound"
+    assert body[1].startswith("! continuity"), "hoisted by evidence level, not by name"
+    assert "MB were never read" in body[1]
+    assert sum(1 for ln in body if ln.lstrip("*! ").startswith("continuity")) == 1, \
+        "hoisted out of its dimension, not printed in both places"
 
 
 # --------------------------------------------------------------- robustness

@@ -2,6 +2,8 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 .venv/
+*.egg-info/
 
 # Machine-specific permission allowlist, not portable
 .claude/settings.local.json
+HANDOFF.md

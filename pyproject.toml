@@ -1,0 +1,47 @@
+# check-chat packaging.
+#
+# `dependencies` is empty and stays empty. This is a diagnostic that has to run inside
+# whatever environment the session under test already has, so stdlib-only is a feature
+# rather than an omission — see the roadmap's note on `re_ask`, the one place an
+# optional dependency has ever looked justified, and even there only as an accelerator
+# that must be measured against the fallback before it is taken.
+#
+# `pytest` is the only dev extra. Before this file existed the tests borrowed a
+# neighbouring project's virtualenv because the system Python has no pytest: it worked
+# on exactly one machine and told a contributor nothing about how to run anything.
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "check-chat"
+# Must match `.claude-plugin/plugin.json`. Releases are tagged by hand for now, so
+# these two strings only stay in step if you move them together.
+version = "0.1.0"
+description = "Session diagnostic for Claude Code: context rot, sycophancy, and wasted tokens"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.9"
+authors = [{ name = "Daniel Gutson" }]
+keywords = ["claude-code", "diagnostic", "context-rot", "sycophancy", "tokens"]
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=7"]
+
+[project.urls]
+Homepage = "https://github.com/dgutson/check-chat"
+Repository = "https://github.com/dgutson/check-chat"
+
+# Installing the package puts `checkchat` on PATH the same way the plugin's `bin/`
+# launcher does, so a contributor's checkout behaves like an install. Both run
+# `checkchat.__main__:main`; neither needs PYTHONPATH set.
+[project.scripts]
+checkchat = "checkchat.__main__:main"
+
+[tool.setuptools]
+packages = ["checkchat"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

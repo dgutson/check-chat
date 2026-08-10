@@ -144,6 +144,7 @@ check's `dimension`, and let its `evidence` field decide how loudly you report i
 
 | `evidence` | How to report it |
 |---|---|
+| `caveat` | Qualifies every other number. **Say it first, above the dimensions**, in one line — then report the rest normally. |
 | `proof` | Carries its own ground truth. **Lead with it.** |
 | `evidenced` | Rare and unambiguous. Report with the specifics quoted. |
 | `ranked` | Fires in most sessions and cannot discriminate. **Ranked table, never a verdict.** |
@@ -153,6 +154,17 @@ check's `dimension`, and let its `evidence` field decide how loudly you report i
 
 If a check reports an `error`, say so in one line and carry on — one broken check does
 not invalidate the rest.
+
+### Caveats — read these before you trust the numbers
+
+A fired `caveat` check qualifies everything else in the report, so it is the one thing
+you must not bury. Its `warnings` list is already written for the user; quote it rather
+than paraphrasing.
+
+Today there is one: `continuity` fires when the transcript was larger than the read cap,
+so it was read **from its tail**. Every count in dimension 3 is then a lower bound on a
+fragment — say that once, plainly, and do not present the totals as complete.
+`dropped_bytes` says how much was never read.
 
 ### `other_findings` — the one thing no check can see
 

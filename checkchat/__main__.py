@@ -57,17 +57,26 @@ def _text(d: dict) -> str:
     if "error" in d:
         return f"error: {d['error']}"
     s = d["session"]
+    partial = "  [PARTIAL]" if s.get("truncated") else ""
     lines = [
         f"session {(s.get('id') or '?')[:8]} | turns {s['turns']} responses {s['responses']} "
-        f"calls {s['calls']} | depth {s['depth_tokens']:,} tok | {s['analysis_ms']}ms",
+        f"calls {s['calls']} | depth {s['depth_tokens']:,} tok | {s['analysis_ms']}ms{partial}",
     ]
+
+    # A `caveat` check qualifies every number below it, so it goes above them. Selected
+    # by evidence level rather than by name, so the next one of its kind needs no edit.
+    hoisted = [n for n, r in d["checks"].items()
+               if r.get("evidence") == "caveat" and r.get("fired") and r.get("line")]
+    for name in hoisted:
+        lines.append(f"! {d['checks'][name]['line']}")
+
     # Dimensions come from the registry, never a literal list here: a hardcoded one
     # silently drops any check registered under a dimension nobody remembered to add.
     order = {"opportunity": 0, "specification": 1, "rot": 2, "sycophancy": 3, "context": 4}
     seen = dict.fromkeys(r.get("dimension", "") for r in d["checks"].values())
     for dim in sorted(seen, key=lambda x: (order.get(x, 99), x)):
         for name, r in d["checks"].items():
-            if r.get("dimension") == dim and r.get("line"):
+            if r.get("dimension") == dim and r.get("line") and name not in hoisted:
                 mark = "*" if r.get("fired") else " "
                 lines.append(f"{mark} {r['line']}")
     fired = d.get("fired") or []

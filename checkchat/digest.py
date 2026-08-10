@@ -11,6 +11,13 @@ states how long the session is. What survives is the goal (the opening turns, wh
 constraints get stated and against which drift is measurable) and the recent work.
 A gap marker sits between them: it admits that material was cut without revealing
 how much.
+
+A second marker was designed and then removed: one saying the excerpt straddled a
+**compaction**, because re-asking for something stated above such a seam is correct
+behaviour rather than `confusion`, and a constraint from above it was lost rather than
+ignored. The reasoning holds; there is just no way to detect a compaction yet. See the
+roadmap — it is worth restoring in full the day a compacted transcript exists to check
+it against, and the marker itself is six lines.
 """
 
 from __future__ import annotations
@@ -23,6 +30,8 @@ HEAD_TURNS = 2              # where the goal and the constraints live
 TAIL_TURNS = 10             # where drift shows up
 PROMPT_CHARS = 1200
 REPLY_CHARS = 1400
+
+GAP = "[... earlier exchanges omitted ...]"
 
 # Blinding has to survive the conversation not being in English. A Spanish session
 # saying "como dije en el turno 47" leaks exactly what an English one saying "as I
@@ -73,7 +82,7 @@ def build(sess: Session) -> str:
 
     for label, i in enumerate(idxs, start=1):
         if gapped and prev is not None and i != prev + 1:
-            lines.append("\n[... earlier exchanges omitted ...]\n")
+            lines.append(f"\n{GAP}\n")
         prev = i
         t = sess.turns[i]
         lines.append(f"### Exchange {label}")
@@ -96,12 +105,12 @@ def stats(sess: Session) -> dict:
         "responses": len(sess.steps),
         "calls": len(sess.calls),
         "depth_tokens": sess.depth,
-        "compactions": sess.compactions,
         "truncated": sess.truncated,
+        "dropped_bytes": sess.dropped_bytes,
         "model": sess.model,
         "digest_exchanges": len(idxs),
         "digest_gapped": gapped,
     }
 
 
-__all__ = ["build", "stats", "selected", "HEAD_TURNS", "TAIL_TURNS"]
+__all__ = ["build", "stats", "selected", "GAP", "HEAD_TURNS", "TAIL_TURNS"]
