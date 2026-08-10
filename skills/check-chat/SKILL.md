@@ -100,10 +100,17 @@ yourself. Checking JSON shape is arithmetic, and this plugin does not spend mode
 attention on arithmetic.
 
 ```bash
-checkchat --verdict <<'JUDGE'
+checkchat --verdict --against <the DIR from step 1> <<'JUDGE'
 <the judge's reply, verbatim>
 JUDGE
 ```
+
+**Always pass `--against`.** It is the directory `--emit` printed in step 1 — the evidence
+the judge was actually shown — and it is what turns "the judge quoted something" into "the
+judge quoted something that exists". Without it every quotation is taken on trust and the
+output says `quotes: NOT CHECKED`, which is the one line in this report you should never
+be relaxed about. It costs nothing: the comparison is a substring match on a file you
+already wrote, and **you still do not read the excerpt yourself.**
 
 Act on the **exit code**:
 
@@ -113,13 +120,26 @@ Act on the **exit code**:
 | `1` | **salvaged** — some items usable, some not | proceed with what survived, and **say in the report which items are missing and why** |
 | `2` | unusable | re-dispatch the judge **once**, appending the printed `RETRY HINT`. If the second reply is still unusable, report the deterministic half alone and say plainly that the independent read failed |
 
-It also enforces two rules that used to be requests rather than checks, so you no
+It also enforces three rules that used to be requests rather than checks, so you no
 longer have to police them by hand:
 
 - **A non-zero score with no evidence is rejected**, not reported. The other items
   survive — one bad field must never erase the whole dimension.
 - **`other_findings` entries with no quote are dropped** before you ever see them.
   Anything the validator kept has already passed that bar.
+- **Quotes are matched against the excerpt.** A `quote` in `other_findings` that is not in
+  the evidence is dropped exactly like a missing one — a quote nobody can find is the same
+  nothing wearing quotation marks, and that field is the one that can invent work.
+
+A scored item is treated differently on purpose, because pulling quotes out of prose is a
+heuristic and a real sycophancy finding must not die over a stray character:
+
+| output | what it means | what you do |
+|---|---|---|
+| `[quote not in excerpt]` beside a score | none of its quotations were found | **Report the finding if you report it at all, but never reproduce the quoted words.** They may be paraphrase; they may be invention. You cannot tell, and the user cannot either |
+| `unverified:` lines | the exact spans that were not found | Do not put any of them in the report |
+| `quotes: 0/0 verified` | it quoted nothing checkable | Same as the no-quotation warning below |
+| `quotes: NOT CHECKED` | you forgot `--against` | Re-run step 2b with it |
 
 `dropped:` and `warning:` lines are informational. A warning ("scored 2 but the
 evidence contains no quotation") is worth a glance before you quote it in the report,
@@ -171,6 +191,10 @@ fragment — say that once, plainly, and do not present the totals as complete.
 Report these **after** the three dimensions, under their own heading, and only when
 they carry a quote. Drop silently any entry that does not, and drop any that merely
 restates one of the six scored items — that is the judge padding, not finding.
+
+The validator has already dropped both the unquoted and the unfindable ones, so an entry
+that reached you has a quote and that quote is in the excerpt. **Do not re-police this by
+hand** — that is the arithmetic this step exists to avoid.
 
 Give a surviving entry the same weight as a scored item: it came from the same read of
 the same excerpt, and the only reason it has no score is that nobody knew to ask for

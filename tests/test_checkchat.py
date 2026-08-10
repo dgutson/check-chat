@@ -526,6 +526,8 @@ def test_unparseable_reply_is_unusable_with_a_hint():
     assert v.status == verdict.UNUSABLE
     assert not v.scores
     assert "Return ONLY a JSON object" in v.retry_hint()
+    assert "quotes:" not in verdict.render(v), \
+        "a reply with no quotes must not be reported as one whose quotes went unchecked"
 
 
 def test_a_valid_reply_produces_no_retry_hint():
@@ -546,6 +548,154 @@ def test_score_two_without_a_quotation_warns_but_survives():
     v = verdict.check(_reply(self_consistency={"score": 2, "evidence": "it contradicted itself"}))
     assert v.scores["self_consistency"]["score"] == 2, "a warning must not drop the finding"
     assert any("no quotation" in w for w in v.warnings)
+
+
+# ------------------------------------------------- the judge's quotes are checked
+#
+# Requiring evidence for a non-zero score created this hole rather than finding it: a
+# mandatory field is a field under pressure, and the cheapest way to fill it when nothing
+# fills it is a plausible sentence in quotation marks.
+
+def _excerpt(tmp_path):
+    """A real blinded excerpt, built by the shipping code path, to quote from.
+
+    Not a hand-written string: the thing quotes are checked against in production is
+    whatever `digest.build` emits, including its truncation, scrubbing and layout.
+    """
+    recs = [_human("Goal: ship the parser. Constraint: standard library only, no deps.")]
+    for i in range(14):
+        recs += [_asst(f"I looked at the **loader** and it re-reads the file each pass, "
+                       f"which is where the {i} extra calls come from. Fixing that first.",
+                       req=f"r{i}"),
+                 _human(f"that does not follow from what you measured, step {i}")]
+    return digest.build(transcript.load(write(tmp_path, recs, name="ex.jsonl")))
+
+
+def test_a_faithful_quote_survives_the_edits_a_model_makes(tmp_path):
+    """The false-fail side, which is the dangerous one: rejecting a real finding over
+    punctuation would be the same confident zero the plugin exists to catch.
+
+    These fourteen mutations are the measured set — run against three real emitted
+    digests, 1,299 faithful quotes, zero false fails.
+    """
+    excerpt = _excerpt(tmp_path)
+    real = "it re-reads the file each pass"
+    assert real in excerpt, "fixture must actually contain the sentence being quoted"
+
+    for label, quote in [
+        ("verbatim", real),
+        ("recased", real.capitalize()),
+        ("whitespace", real.replace(" ", "\n  ")),
+        ("markdown", f"**{real}**"),
+        ("dash folded", real.replace("-", "—")),
+        ("trailing period", real + "."),
+        ("elided", "it re-reads … each pass"),
+        ("elided dots", "it re-reads ... each pass"),
+        ("bracketed elision", "it re-reads [...] each pass"),
+    ]:
+        v = verdict.check(_reply(goal_adherence={"score": 2, "evidence": f'it said "{quote}"'}),
+                          excerpt)
+        assert v.scores["goal_adherence"]["verified"] is True, f"faithful quote failed: {label}"
+        assert v.status == verdict.OK, f"a faithful quote must cost nothing: {label}"
+
+
+def test_a_fabricated_quote_is_caught_and_the_score_is_not_discarded(tmp_path):
+    """The enforcement asymmetry: extraction from prose is a heuristic, so this flags
+    the item and keeps the score. Dropping it would trade one silent failure for another."""
+    excerpt = _excerpt(tmp_path)
+    v = verdict.check(_reply(sycophancy={
+        "score": 3,
+        "evidence": 'it folded immediately: "You are absolutely right, I will revert that."',
+    }), excerpt)
+
+    assert v.scores["sycophancy"]["score"] == 3, "the finding may be real; only its quote is not"
+    assert v.scores["sycophancy"]["verified"] is False
+    assert any("none of its quoted evidence appears" in p for p in v.problems)
+    assert v.status == verdict.SALVAGED
+    assert "elide with" in v.retry_hint(), "the hint must say how to comply, not just that it failed"
+    assert v.unverified and "sycophancy" in v.unverified[0]
+
+
+def test_a_reordering_of_real_words_is_still_a_fabrication(tmp_path):
+    """The hard case, and the one a paraphrase check would miss: every word is in the
+    excerpt, in an order nobody said."""
+    excerpt = _excerpt(tmp_path)
+    v = verdict.check(_reply(confusion={
+        "score": 2, "evidence": 'it claimed "each pass re-reads the loader file"'}), excerpt)
+    assert v.scores["confusion"]["verified"] is False
+
+
+def test_a_partly_fabricated_evidence_warns_rather_than_rejects(tmp_path):
+    excerpt = _excerpt(tmp_path)
+    v = verdict.check(_reply(self_consistency={
+        "score": 2,
+        "evidence": 'first "it re-reads the file each pass", later "the loader caches nothing at all"',
+    }), excerpt)
+
+    assert v.scores["self_consistency"]["quotes"] == [1, 2]
+    assert v.scores["self_consistency"]["verified"] is False
+    assert any("do not repeat those words" in w for w in v.warnings)
+    assert v.status == verdict.OK, "one bad span of two is not a defective reply"
+
+
+def test_a_fabricated_other_finding_is_dropped_like_an_unquoted_one(tmp_path):
+    """`other_findings` is the one field that manufactures work out of nothing, and its
+    whole value is by contract one verbatim quote — certain enough to drop on."""
+    excerpt = _excerpt(tmp_path)
+    v = verdict.check(_reply(other_findings=[
+        {"finding": "invented one", "quote": "we should rewrite the whole loader", "actionable": True},
+        {"finding": "real one", "quote": "it re-reads the file each pass", "actionable": True},
+    ]), excerpt)
+
+    assert [f["finding"] for f in v.other_findings] == ["real one"]
+    assert v.other_findings[0]["verified"] is True
+    assert any("not in the excerpt" in d for d in v.dropped)
+    assert v.status == verdict.OK, "dropping a fabrication is not a failure of the reply"
+
+
+def test_an_unchecked_reply_never_reads_like_a_checked_one():
+    """Without the excerpt the quotes are taken on trust. A check that goes silent when
+    it is skipped is indistinguishable from one that passed."""
+    v = verdict.check(_reply(goal_adherence={"score": 2, "evidence": 'it said "something here"'}))
+    assert "NOT CHECKED" in verdict.render(v)
+    assert v.scores["goal_adherence"].get("verified") is None
+    assert v.verified_against == 0 and not v.problems
+
+
+def test_nothing_quotable_is_not_the_same_as_nothing_found(tmp_path):
+    """Tri-state on purpose: 'quoted nothing checkable' is the existing no-quotation
+    warning, and must not be reported as a quote that was checked and missing."""
+    excerpt = _excerpt(tmp_path)
+    v = verdict.check(_reply(confusion={"score": 1, "evidence": "no instances of this at all"}),
+                      excerpt)
+    assert v.scores["confusion"]["verified"] is None
+    assert v.quotes_checked == 0 and not v.unverified and not v.problems
+    assert "0/0 verified" in verdict.render(v)
+
+
+def test_a_wrong_against_path_costs_the_verification_not_the_verdict(tmp_path, capsys):
+    reply = tmp_path / "judge.json"
+    reply.write_text(_reply())
+    code = cli.main(["--verdict", str(reply), "--against", str(tmp_path / "gone")])
+    out = capsys.readouterr().out
+
+    assert code == verdict.OK, "an operator's broken path must not invalidate a good reply"
+    assert "NOT checked" in out and "does not exist" in out
+
+
+def test_against_a_directory_reads_both_files_the_judge_was_given(tmp_path):
+    """The judge is told to read the digest *and* the candidates, so a quote from
+    either one is faithful."""
+    d = tmp_path / "emit"
+    d.mkdir()
+    (d / "digest.txt").write_text("### Exchange 1\nUSER: go\nASSISTANT: nothing to see\n")
+    (d / "candidates.txt").write_text("CHALLENGE: you have not measured that at all\n")
+    excerpt, why = cli._evidence(str(d))
+
+    assert why == ""
+    v = verdict.check(_reply(sycophancy={
+        "score": 2, "evidence": 'the user said "you have not measured that at all"'}), excerpt)
+    assert v.scores["sycophancy"]["verified"] is True, "candidates.txt is evidence too"
 
 
 # --------------------------------------------------------------- the registry

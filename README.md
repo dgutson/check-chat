@@ -51,6 +51,13 @@ Its criteria live in a system prompt rather than being restated in a user messag
 run, and it reads the excerpt from a file the measurement step wrote — so the diagnosing
 session never has to hold it.
 
+**Its reply is validated, not believed.** The JSON is parsed tolerantly and then checked
+against the contract, and every quotation is matched against the excerpt the judge was
+actually shown. Requiring evidence for a non-zero score is what makes that necessary: a
+mandatory field is a field under pressure, and the cheapest way to fill it when nothing
+fills it is a plausible sentence in quotation marks. A quote that is not in the excerpt
+never reaches you as one. What is *not* checked is who said it — presence, not attribution.
+
 **Blinding is enforced by instruction, not by the sandbox.** The intent was `tools: []`,
 which would have made a judge that *cannot* go and read the unblinded original sitting
 in `~/.claude/projects/`. The harness grants *all* tools for an empty list rather than

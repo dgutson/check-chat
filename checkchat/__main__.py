@@ -84,6 +84,25 @@ def _text(d: dict) -> str:
     return "\n".join(lines)
 
 
+def _evidence(path: str) -> tuple[str | None, str]:
+    """What the judge was shown, for checking its quotations against.
+
+    Both `--emit` files count: the judge is told to read the digest *and* the candidates,
+    so a quote from either is faithful. An unreadable path returns a reason rather than
+    raising — a broken `--against` must not cost a usable verdict, only its verification.
+    """
+    p = Path(path)
+    if p.is_dir():
+        parts = [(p / n).read_text(errors="replace")
+                 for n in ("digest.txt", "candidates.txt") if (p / n).is_file()]
+        if not parts:
+            return None, f"no digest.txt or candidates.txt in {p}"
+        return "\n".join(parts), ""
+    if p.is_file():
+        return p.read_text(errors="replace"), ""
+    return None, f"--against path does not exist: {p}"
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="checkchat", description=__doc__)
     ap.add_argument("--cwd", default=os.getcwd(), help="directory the session runs in")
@@ -96,6 +115,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--verdict", metavar="PATH", nargs="?", const="-", default=None,
                     help="validate the judge's reply (PATH, or '-' for stdin) and exit "
                          "0 ok / 1 salvaged / 2 unusable")
+    ap.add_argument("--against", metavar="PATH", default=None,
+                    help="with --verdict, the evidence the judge was given (the --emit DIR, "
+                         "or one file) — its quotations are checked against it")
     ap.add_argument("--json", action="store_true",
                     help="with --verdict, emit the normalised verdict as JSON")
     ap.add_argument("--emit", metavar="DIR", default=None,
@@ -110,7 +132,10 @@ def main(argv: list[str] | None = None) -> int:
 
     if a.verdict is not None:
         raw = sys.stdin.read() if a.verdict == "-" else Path(a.verdict).read_text(errors="replace")
-        v = verdict.check(raw)
+        excerpt, why = _evidence(a.against) if a.against else (None, "")
+        v = verdict.check(raw, excerpt)
+        if why:
+            v.warnings.insert(0, f"quotes were NOT checked — {why}")
         print(json.dumps(v.as_dict(), indent=1) if a.json else verdict.render(v))
         return v.status
 

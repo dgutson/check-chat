@@ -5,8 +5,9 @@ pick it up.
 
 The plugin is **installed and working end-to-end** on this machine: `/check-chat` runs,
 the deterministic pass takes ~50ms, the judge dispatches by `subagent_type`, and the
-report comes back. 47 tests pass, in the project's **own** virtualenv. What follows is
-what is not done, ordered by whether it blocks someone other than the author.
+report comes back. 56 tests pass, in the project's **own** virtualenv (`.venv/bin/pytest`
+from the repo root). What follows is what is not done, ordered by whether it blocks
+someone other than the author.
 
 Every item says how you would know it is finished. The rule the project is built on
 applies to this list too: **a detector that cannot be shown to fire on real transcripts
@@ -37,9 +38,7 @@ It also turned two honour-system rules into machine checks — a non-zero score 
 evidence is rejected while the other items survive, and an `other_findings` entry with
 no quote is dropped before the reporting step can forget to. 8 tests.
 
-Still open: nothing validates that quoted evidence *actually appears in the excerpt*.
-A judge could quote something plausible that was never said, and neither the validator
-nor the reporting step would notice.
+The hole it left is closed by item 11.
 
 **3. `truncated` is consumed; `compactions` is gone** — `continuity`,
 `evidence="caveat"` (2026-08-10). "Computed and consumed by nothing" has two honest
@@ -96,17 +95,61 @@ no pytest and that neighbouring project had one. check-chat has never had any de
 on rot-metrics — no import, no shared code — so this was pure machine-local accident
 masquerading as a toolchain. `dependencies` is empty and should stay empty.
 
+**11. The judge's quotes are checked against the excerpt** — `--verdict --against DIR`
+(2026-08-10). Item 2 made evidence mandatory for a non-zero score, and in doing so
+**manufactured this hole rather than uncovering it**: a mandatory field is a field under
+pressure, and the cheapest way to satisfy "quote the text that justifies this" when
+nothing justifies it is a plausible sentence in quotation marks. The validator then
+recorded that as a satisfied contract. The end of that path is a report showing the user a
+line nobody said — attributed, in quotation marks, by a tool whose whole selling point is
+that it does not guess.
+
+`--against` takes the `--emit` directory, i.e. exactly the two files the judge was shown,
+and matches each quotation against them. Normalisation folds only what a faithful quote
+may differ by — whitespace, case, curly-vs-straight quotes and dashes, markdown
+decoration — and elisions (`…`, `...`, `[...]`) are honoured fragment-by-fragment, in
+order, which is what makes the check *improve* quoting instead of merely failing it. The
+judge is now told to elide rather than reword.
+
+**Enforcement follows how certain the check is, not how bad the offence is** — the same
+principle that let truncation ship while compaction was cut:
+
+| field | certainty | consequence of a miss |
+|---|---|---|
+| `other_findings.quote` | the whole value is by contract one verbatim quote | **dropped**, exactly as a missing quote already was — and it is the one field that can invent work |
+| a scored item's `evidence` | prose that *contains* quotes, so extraction is a heuristic | **flagged, score kept**: the finding may be real, and the skill is forbidden to reproduce the words |
+
+Measured before shipping, against three real emitted digests (32,000 chars): **1,299
+faithful quotes across 14 mutation kinds, 0 false fails; 331 fabrications — including
+word-swapped and reordered versions of real sentences — 0 false passes.** The first run
+showed 147 false fails, all of which were the *harness* splicing sentences across
+exchange boundaries; the matcher was right and the measurement was wrong. 9 tests, whose
+positive control quotes an excerpt built by `digest.build` rather than a hand-written
+string — the thing quotes are matched against in production is whatever it emits.
+
+Not checked, and stated rather than implied: **presence, not attribution.** A quote really
+in the excerpt but credited to the wrong speaker passes. Scoping matches to one speaker's
+line was considered and rejected — it would false-fail a `self_consistency` quote that
+legitimately elides across two exchanges, which is the item where that matters most.
+
 ---
 
 ## Now — silent wrongness, in rough order of how quietly it fails
 
-**4. `cli_probes` has never fired its cross-session path.**
+**4. `cli_probes` has never fired its cross-session path.** The only entry here, and it
+was deferred once more in favour of item 11 for a stated reason: a detector that never
+fires never makes a false claim. `cli_probes` is dead weight and cutting it is
+bookkeeping, whereas the unchecked-quote hole could put words in the user's mouth. Silent
+dead weight loses to loud wrongness — but it does not stop being dead weight.
+
 `probes` counts fine (19 across the corpus) but `recurring` is 0 everywhere, so the
-actionable half — and the fork-dedup guard protecting it, which the handoff called
-mandatory — has never been observed working. By this project's own rule that is
+actionable half — and the fork-dedup guard protecting it, called mandatory when it was
+written — has never been observed working. By this project's own rule that is
 disqualifying for a shipped detector.
 - *Done when:* it fires on a real corpus with the guard demonstrably suppressing a fork,
   or it is cut
+- Apply item 10's precedent, which is the whole point: **cut it** unless it can be shown
+  to fire. Consistency there matters more than which way this one goes
 
 ---
 
@@ -216,15 +259,20 @@ replacement against, which is what disqualifies it.
   break silently if that string changes. The `tool-results/` path pattern is the robust
   half.
 
-## The API question, for whoever revisits item 2
+## The API question, and what items 2 and 11 settled about it
 
 There is **no SDK, no framework, no API client** anywhere in this plugin — no
 `anthropic`, no POML, no PydanticAI, no HTTP at all. Dependencies are stdlib only. The
 LLM is reached through Claude Code's own subagent mechanism, which is why the plugin
 only works inside Claude Code and could not run over transcripts in CI without new code.
 
-That is the right trade for now, but it is exactly why item 2 is open: prompt-instructed
-JSON has no validator and no retry behind it.
+That is why items 2 and 11 exist: there is no API layer to pin a response format, so
+enforcement happens *after* the reply, in `verdict.py`. Both items were the cheap half of
+what an SDK would have given — a schema check and a grounding check on the fields the
+schema cannot reach — and neither needed a dependency to get. **A structured-output API
+would still not have caught item 11's failure**, because a fabricated quote is a
+schema-valid string; only comparing it to the excerpt catches it. Worth remembering before
+concluding that the missing SDK is what is holding this back.
 
 ---
 
@@ -241,3 +289,21 @@ exists.
 | Generic recurring tool-call sequence miner | Exactly **zero**. Of 684 consecutive-Bash trigrams, 7 repeat anywhere and **0 across sessions**. The naive version looks like it works — every apparent hit is the duplicate-log artifact the fork-dedup guard exists to remove |
 | Byte-identical re-read / within-session re-fetch | Verified **0**. Fourteen repeat `Read`s share byte-identical *args*; none share byte-identical *results*, and 12 of 14 had the file edited in between |
 | Compaction as a **drop in context depth** | **0 of 4,155** consecutive measurements above 40k fell at all — depth is strictly monotonic within a session file. The threshold is not the problem; see item 10 before rebuilding this |
+| Quote checking **scoped to one speaker's line** | Rejected on reasoning, not measurement: it false-fails a `self_consistency` quote that elides across two exchanges — the item where cross-exchange quoting is the *point*. Item 11 checks presence, not attribution, deliberately |
+
+---
+
+## Measuring against the corpus — two ways to get a false answer
+
+Both cost a full re-run to discover, so they are recorded here rather than relearned.
+
+- **`cd x && grep */*.jsonl` fails silently in the tool environment.** The `cd` does not
+  persist and the glob expands in the wrong directory, so it reports nothing and looks
+  like a real zero. Use
+  `find ~/.claude/projects -name '*.jsonl' -print0 | xargs -0 grep …`.
+- **Transcript JSON has spaces after its colons**, so `grep '"type":"assistant"'` matches
+  nothing at all. Another zero that is not a measurement.
+- **Sweeping for text? Do not glue lines together.** Item 11's first measurement reported
+  147 false fails, every one of them a sentence the *harness* had spliced across two
+  records. When a sweep contradicts working code, suspect the sweep first — this has now
+  happened twice, the other being the `Step.depth` carry-forward in item 10.
