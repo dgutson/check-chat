@@ -178,6 +178,54 @@ def test_reread_after_edit_is_not_waste(tmp_path):
     assert detect.rereads(untouched)["repeats_without_change"] == 1
 
 
+def _reads(tmp_path, spans, name):
+    """One session that reads one file at the given (offset, limit) spans. None = whole."""
+    recs = [_human("go")]
+    for i, sp in enumerate(spans):
+        params = {"file_path": "/a.py"}
+        if sp is not None:
+            params["offset"], params["limit"] = sp
+        recs += [_asst("", calls=[(f"t{i}", "Read", params)], req=f"r{i}"),
+                 _result(f"t{i}", "x" * 100)]
+    return transcript.load(write(tmp_path, recs, name=name))
+
+
+def test_disjoint_slices_of_one_file_are_not_a_reread(tmp_path):
+    """Grouping by path alone counted them as waste: 27 of 38 corpus repeats — 71% — were
+    different parts of one file, dropping the firing rate from 6 of 54 sessions to 1.
+
+    An `evidenced` check is reported with quoted specifics, so a false positive here tells
+    a user they wasted tokens they never spent. That is item 4's failure with the sign
+    flipped, and it is worse: a false zero stays quiet, this one argues.
+    """
+    sess = _reads(tmp_path, [(1, 70), (300, 70), (600, 70)], "disjoint.jsonl")
+    r = detect.rereads(sess)
+    assert r["repeats_without_change"] == 0, "disjoint slices fetch nothing twice"
+    assert r["repeats_disjoint_slices"] == 2, "and the exclusion is reported, not hidden"
+    assert r["chars"] == 0
+
+
+def test_overlapping_slices_are_still_a_reread(tmp_path):
+    """The fix must not buy its precision with recall: overlap is a real repeat."""
+    r = detect.rereads(_reads(tmp_path, [(1, 100), (50, 100)], "overlap.jsonl"))
+    assert r["repeats_without_change"] == 1
+    assert r["repeats_disjoint_slices"] == 0
+
+
+def test_a_whole_file_read_overlaps_every_slice(tmp_path):
+    """No span means the whole file, which re-fetches any slice read before it."""
+    r = detect.rereads(_reads(tmp_path, [(300, 70), None], "whole.jsonl"))
+    assert r["repeats_without_change"] == 1
+
+
+def test_a_slice_reread_after_an_unrelated_slice_is_still_caught(tmp_path):
+    """Why pairing is against every earlier read, not the previous one: consecutive
+    pairing sees `A, B, A` as two disjoint pairs and misses that A was fetched twice."""
+    r = detect.rereads(_reads(tmp_path, [(1, 70), (300, 70), (1, 70)], "aba.jsonl"))
+    assert r["repeats_without_change"] == 1, "the third read repeats the first"
+    assert r["repeats_disjoint_slices"] == 1, "the second read is a genuinely new slice"
+
+
 def test_stderr_redirect_is_not_a_mutation(tmp_path):
     """`2>/dev/null` writes nothing. Treating it as a write makes every command its own alibi."""
     per_file, repo_wide = detect.mutation_index(transcript.load(write(tmp_path, [
@@ -770,6 +818,176 @@ def test_position_references_are_scrubbed(tmp_path):
         _human("As I said in turn 47, keep it simple."), _asst("ok"),
     ]))
     assert "turn 47" not in digest.build(sess)
+
+
+# ------------------------------------------------------- the tool-call ledger
+#
+# The ledger is the judge's only view of *what* the tool calls touched, and it may only
+# ship because it discloses nothing the excerpt already hid. These tests guard that
+# property, because the failure is silent: a ledger that leaks position turns the judge
+# from a judgment into a prior, and nothing in the output would say so.
+
+def test_ledger_shows_targets_the_tools_line_hides(tmp_path):
+    """The hole item 8 names: `[tools: Read x2]` cannot say a forbidden file was edited."""
+    sess = transcript.load(write(tmp_path, [
+        _human("Refactor the loader. Do not touch vendor/ under any circumstances."),
+        _asst("on it", calls=[("c1", "Read", {"file_path": "/src/loader.py"}),
+                              ("c2", "Edit", {"file_path": "/src/vendor/zlib.py"})]),
+        _result("c1", "x" * 4000),
+        _result("c2", "ok"),
+    ]))
+    text = digest.build(sess)
+    assert "### Tool calls, by exchange" in text
+    assert "/src/vendor/zlib.py" in text, "the judge cannot judge a target it cannot see"
+    assert "E1  Read  /src/loader.py  (4k)" in text
+    assert "[tools: Read, Edit]" in text, "the inline count line still carries the context"
+
+
+def test_ledger_rows_disclose_no_count_the_digest_did_not(tmp_path):
+    """Why blinding survives: a row count never *exceeds* what `[tools: ...]` states.
+
+    The invariant is one-directional, and asserting equality here would be wrong — the
+    row cap legitimately under-discloses. Stated the strict way against the shipping
+    code on the 54-session corpus: 0 over-disclosing exchanges, 0 mislabelled rows, and
+    all 24 under-disclosures inside a session the cap truncated. This pins the direction
+    so a later change to `selected()` or to the ledger's scope cannot widen it into the
+    length leak that would turn the judge back into a prior.
+    """
+    recs = [_human("goal: ship it")]
+    for i in range(30):
+        recs += [_asst(f"step {i}", calls=[(f"c{i}", "Read", {"file_path": f"/f{i}.py"})],
+                       req=f"r{i}"),
+                 _human(f"next {i}")]
+    sess = transcript.load(write(tmp_path, recs))
+    idxs, gapped = digest.selected(sess)
+    assert gapped, "fixture must be long enough that material is cut"
+
+    rows = [r for r in digest.ledger(sess).splitlines() if r.strip()]
+    assert len(rows) < len(sess.calls), "the ledger must not reach outside the excerpt"
+    for lbl, i in enumerate(idxs, start=1):
+        assert sum(1 for r in rows if r.startswith(f"E{lbl}  ")) <= \
+            sum(len(s.calls) for s in sess.steps_of(i)), "over-disclosure is the leak"
+
+
+def test_the_row_cap_under_discloses_and_that_is_not_a_leak(tmp_path):
+    """The 24 corpus under-disclosures, reproduced: the cap stops the table mid-session,
+    so a later exchange contributes fewer rows than its `[tools: ...]` line states. Only
+    the other direction would leak, and this pins which one the cap can produce."""
+    recs = [_human("goal: ship it")]
+    for i in range(12):
+        recs += [_asst(f"step {i}", req=f"r{i}",
+                       calls=[(f"c{i}_{j}", "Read", {"file_path": f"/f{i}_{j}.py"})
+                              for j in range(20)]),
+                 _human(f"next {i}")]
+    sess = transcript.load(write(tmp_path, recs))
+    idxs, _ = digest.selected(sess)
+    rows = [r for r in digest.ledger(sess).splitlines() if r.strip()]
+    assert digest.LEDGER_CUT in rows, "fixture must actually hit the cap"
+
+    body = [r for r in rows if r != digest.LEDGER_CUT]
+    deficits = [
+        sum(len(s.calls) for s in sess.steps_of(i)) - sum(1 for r in body if r.startswith(f"E{lbl}  "))
+        for lbl, i in enumerate(idxs, start=1)
+    ]
+    assert all(d >= 0 for d in deficits), "no exchange may over-disclose"
+    assert any(d > 0 for d in deficits), "the cap must be what under-discloses"
+
+
+def test_ledger_labels_are_the_renumbered_ones(tmp_path):
+    """A row citing a real turn index would un-blind position by the back door."""
+    recs = [_human("goal: ship it")]
+    for i in range(30):
+        recs += [_asst(f"step {i}", calls=[(f"c{i}", "Bash", {"command": f"echo {i}"})],
+                       req=f"r{i}"),
+                 _human(f"next {i}")]
+    sess = transcript.load(write(tmp_path, recs))
+    idxs, _ = digest.selected(sess)
+    labels = {int(r.split()[0][1:]) for r in digest.ledger(sess).splitlines() if r.strip()}
+    assert labels <= set(range(1, len(idxs) + 1))
+    assert max(labels) <= len(idxs) < max(idxs), \
+        "labels must be excerpt positions, never transcript positions"
+
+
+def test_ledger_scrubs_position_out_of_a_command(tmp_path):
+    """Prose is scrubbed; a command is prose someone typed, and leaks identically."""
+    sess = transcript.load(write(tmp_path, [
+        _human("go"),
+        _asst("", calls=[("c1", "Bash", {"command": "git commit -m 'fixes turn 47'"})]),
+    ]))
+    assert "turn 47" not in digest.build(sess)
+
+
+def test_different_slices_of_one_file_are_not_shown_as_a_repeat(tmp_path):
+    """Found by reading the real output, not by reasoning: three reads of one file at
+    different offsets rendered as three identical rows, which is a repeat that did not
+    happen — the ledger manufacturing the false positive its own prompt fences off."""
+    sess = transcript.load(write(tmp_path, [
+        _human("read the parser"),
+        _asst("", calls=[("c1", "Read", {"file_path": "/src/p.py", "offset": 1, "limit": 70}),
+                         ("c2", "Read", {"file_path": "/src/p.py", "offset": 300, "limit": 70}),
+                         ("c3", "Read", {"file_path": "/src/p.py"})]),
+    ]))
+    rows = [r for r in digest.ledger(sess).splitlines() if r.strip()]
+    assert len(set(rows)) == 3, f"slices must be distinguishable, got {rows}"
+    assert "[lines 1-71]" in rows[0] and "[lines 300-370]" in rows[1]
+    assert "[lines" not in rows[2], "a whole-file read carries no slice marker"
+
+
+def test_a_command_keeps_its_head_and_a_path_keeps_its_basename():
+    """Truncation must not cost the identifying end, which differs by shape."""
+    cmd = "grep -rn 'needle' --include=*.py " + "x" * 80 + " | head -40"
+    assert digest._target(cmd).startswith("grep -rn 'needle'")
+    assert digest._target(cmd).endswith("…")
+
+    path = "/home/u/" + "deep/" * 20 + "module.py"
+    assert digest._target(path).endswith("module.py")
+
+
+def test_ledger_is_bounded(tmp_path):
+    """Cost is bounded by row count, and the cut is admitted rather than silent."""
+    recs = [_human("goal: ship it"),
+            _asst("", calls=[(f"c{i}", "Read", {"file_path": f"/f{i}.py"})
+                             for i in range(digest.LEDGER_ROWS + 40)])]
+    sess = transcript.load(write(tmp_path, recs))
+    rows = digest.ledger(sess).splitlines()
+    assert len(rows) == digest.LEDGER_ROWS + 1
+    assert rows[-1] == digest.LEDGER_CUT
+
+
+def test_a_wasted_effort_finding_must_quote_the_ledger(tmp_path):
+    """`wasted_effort` inherits `other_findings`' guardrail rather than a copy of it.
+
+    It is the second field that can manufacture work out of nothing, and it is pointed at
+    a table of file paths — the easiest thing in the excerpt to paraphrase plausibly.
+    """
+    sess = transcript.load(write(tmp_path, [
+        _human("Read the parser."),
+        _asst("done", calls=[("c1", "Read", {"file_path": "/src/parser.py"})]),
+        _result("c1", "x" * 90000),
+    ]))
+    excerpt = digest.build(sess)
+    row = "E1  Read  /src/parser.py  (90k)"
+    assert row in excerpt, "fixture must contain the row being quoted"
+
+    v = verdict.check(_reply(wasted_effort=[
+        {"finding": "read whole", "quote": row},
+        {"finding": "invented", "quote": "E1  Read  /src/nonexistent_module.py  (90k)"},
+        {"finding": "unquoted"},
+    ]), excerpt)
+    assert [f["finding"] for f in v.wasted_effort] == ["read whole"]
+    assert any("wasted_effort[1]" in d for d in v.dropped)
+    assert any("wasted_effort[2]" in d for d in v.dropped)
+
+
+def test_an_unanswered_ledger_question_is_not_a_clean_one(tmp_path):
+    """The confident zero, arriving by omission: a missing key must not read as `[]`."""
+    v = verdict.check(_reply(), "### Exchange 1\nUSER: go\nASSISTANT: fine")
+    assert v.wasted_effort == []
+    assert any("wasted_effort" in w and "absent" in w for w in v.warnings)
+
+    v2 = verdict.check(_reply(wasted_effort=[]), "### Exchange 1\nUSER: go\nASSISTANT: fine")
+    assert not any("wasted_effort" in w for w in v2.warnings), \
+        "an explicit empty list is an answer and must not be flagged"
 
 
 # ------------------------------------------------ completeness of the record

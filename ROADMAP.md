@@ -298,13 +298,115 @@ changes it, every time.
 
 ---
 
+**14. The counting dimension has an open-world escape hatch** — the tool-call ledger
+(2026-08-11). Closes item 8.
+
+`other_findings` gave the judge open-world recall over *prose*. The counting dimension had
+none at all: the judge saw `[tools: Read x3]` and never what those calls touched, so a
+pattern nobody wrote a check for was invisible to the checks (they only find what was
+named) *and* to the judge (it could not see targets). `digest.ledger()` adds one row per
+call — tool, target, result size, failure flag — and a `wasted_effort` question asks what
+the request did not need.
+
+**The ledger lives inside the excerpt, and that placement is the design.** `verdict.check`
+already verifies quotations against whatever the excerpt contains, so a finding citing a
+tool call is checkable *for free*, by the same machinery, with no second verification path
+to drift out of step. `wasted_effort` reuses `_clean_findings` for the same reason.
+
+**Blinding survives by construction — one-directionally.** Rows cover only the exchanges
+already in the excerpt and carry the same renumbered `E<n>`, so the ledger never discloses
+a count the `[tools: ...]` line did not. Measured against the shipping code on 54 sessions:
+
+| measurement | result |
+|---|---|
+| exchanges disclosing **more** rows than `[tools: ...]` states (the leak) | **0** |
+| rows labelled with a transcript position instead of an excerpt one | **0** |
+| exchanges disclosing fewer — all inside a session the row cap truncated | 24 |
+| sessions hitting `LEDGER_ROWS = 120` | 7 of 54 |
+| calls falling inside digest scope | **89%** |
+| cost: ledger chars | median 2,040, p90 8,048 (~2k tokens), max 9,838 |
+| ledger as a share of the excerpt | median 30%, p90 67% |
+
+Do not restate that invariant as equality. It is `rows <= tools_line`, and the cap is why.
+
+**What measurement changed about the plan.** Item 8's sketch was "hand the judge a compact
+tool-call table and ask what looks wasteful." Measured on the corpus, both readings of that
+question come out near-null *and* dangerous:
+
+- *"What looks wasteful?"* — the only thing visible at volume is a repeated `(tool, target)`,
+  present in **10 of 54** sessions while `rereads`, `producers` and `partial_use` are all
+  correctly quiet. Those repeats are ordinary work: two `Edit`s to one file, a `Read` after
+  an `Edit`, a test re-run after a change. The Python checks exclude them deliberately. A
+  judge asked the open question reports them, counting worse than Python and manufacturing
+  the false positives this plugin exists to avoid. **So the prompt fences repeats off by
+  name**, and the skill discards any that arrive anyway.
+- *"Claimed but never did?"* — 27 claim-verb-plus-path mentions in digest prose corpus-wide,
+  **5** naming a file never `Edit`/`Written`, across **4 of 54** sessions, and those five look
+  like prose discussing files. No volume here either.
+
+**Corpus frequency is the wrong test for an escape hatch, and that is the reusable part.**
+`other_findings` would score just as null on this corpus and nobody would call it
+unvalidated: its justification is structural, not frequentist — it is the only part of the
+system that can see outside its own categories. So an escape hatch is judged on three
+things instead, all of which this one meets: it is **bounded** (quote-verified, so it cannot
+invent work), it is **cheap** (~2k tokens at p90), and the information it carries is
+**genuinely absent today** (targets never reached the judge, by construction). Do not
+demand a positive rate from the next one either.
+
+**Two bugs found by reading the real output, not by reasoning about it** — both would have
+shipped as silent misinformation:
+- Three `Read`s of *different slices* of one file rendered as three identical rows, showing
+  the judge a repeat that never happened — the ledger manufacturing the exact false
+  positive its own prompt fences off. Fixed with a `[lines a-b]` marker.
+- Middle-truncating every target cost long Bash commands their head, which is the end that
+  identifies a command, while paths are identified by their tail. Now split on whether the
+  key contains whitespace.
+
+**A missing `wasted_effort` key is a warning, not an empty list.** `[]` means the ledger was
+assessed and was clean; absent means the question went unanswered. Letting those read alike
+would put a confident zero on the dimension by omission, which is item 4's failure mode
+arriving through the output format. 11 tests.
+
+**15. `rereads` no longer counts different slices of one file as waste** (2026-08-11).
+
+Found by building item 14, not by looking for it: the ledger's first draft rendered three
+reads of *different* slices of one file as three identical rows, and fixing that raised the
+obvious question of whether the shipped detector made the same mistake. It did — `rereads`
+grouped by path and never looked at `offset`/`limit`.
+
+| measurement | before | after |
+|---|---|---|
+| `repeats_without_change`, corpus-wide | 38 | **11** |
+| …excluded as disjoint slices | — | **27 (71%)** |
+| sessions where the check fires | 6 of 54 | **1 of 55** |
+| on the session that found it | 5 unchanged, 16,792 chars | **1 unchanged, 2,599 chars** |
+
+**Why this one was urgent.** `rereads` is `evidenced` tier, which the skill reports "with
+the quoted specifics" — so 71% of the time it was telling a user, with specifics, that they
+wasted tokens they never spent. **That is item 4's failure with the sign flipped, and it is
+the worse direction: a false zero stays quiet, a false positive argues.** Every check has
+now been audited for the false-zero shape (item 12); nothing had been audited for this one.
+
+Two things worth keeping:
+- **Consecutive pairing was independently wrong.** `A, B, A` is two disjoint pairs, so the
+  genuine re-fetch of `A` was missed. Each read is now compared against *every* earlier
+  still-valid read, which fixes a recall bug the precision fix would otherwise have hidden.
+- **A whole-file read has no span and overlaps everything**, which is correct rather than a
+  special case — reading the whole file after a slice does re-fetch that slice.
+
+`repeats_disjoint_slices` is reported beside `repeats_after_edit` for the same reason that
+one is: a number is credible next to what it excludes, and both of these were once counted
+as waste. `rereads` is now genuinely rare, which makes its `evidenced` tier more accurate
+than before, not less. 4 tests.
+
+---
+
 ## Now — nothing, and that is a measured statement
 
 Every check has been audited for item 4's failure (item 12), no defect is outstanding, and
-the three remaining features are each blocked or undesigned. The unblocked one is **item 8**
-— the counting dimension has no open-world escape hatch at all, which is the shape of hole
-item 4 sat in. Read item 12's rule before touching any of them, and item 13 before
-trusting a corpus sweep.
+item 8 shipped as item 14. What remains is items 6, 7, 9 and 10, all blocked on transcripts
+Daniel does not have. Read item 12's rule before touching any of them, item 13 before
+trusting a corpus sweep, and item 14 before adding anything else to the excerpt.
 
 ---
 
@@ -336,11 +438,10 @@ Same verdict for item 7, which is justified by the same corpus.
 "Is this answer about *this* codebase, or a tutorial?" No neural net needed. Proposed,
 never built.
 
-**8. Close the open world on the *counting* dimension.**
-`other_findings` recovers open-world recall for judgment only — the judge sees the prose
-digest, not the tool-call ledger, so an unanticipated *waste* pattern remains invisible
-to everything. No design for this yet. Possibly: hand the judge a compact tool-call table
-and ask what looks wasteful, accepting that it counts worse than Python does.
+**8. Close the open world on the *counting* dimension.** — **done, see item 14.**
+Shipped as a tool-call ledger inside the excerpt plus a `wasted_effort` question. The
+sketch here said "ask what looks wasteful"; measurement said that framing is a false-
+positive engine and the question had to be fenced. Item 14 has the numbers.
 
 ---
 
@@ -428,6 +529,13 @@ replacement against, which is what disqualifies it.
 - **`cli_probes` reads other projects' transcripts.** Only the command family crosses the
   boundary, never file contents, and it stays on the machine — but a report for project A
   can now name a command probed in project B. `--siblings 0` disables it.
+- **The tool-call ledger cannot see the omitted middle.** It covers the excerpt's exchanges
+  only — 89% of calls on the corpus, and the 11% it misses sit in the gap the digest already
+  cut. This is deliberate: widening it to the whole session would disclose length and turn
+  the judge into a prior, which costs more than the recall is worth. `LEDGER_ROWS = 120`
+  truncates a further 7 of 54 sessions, and that cut is stated in the table rather than
+  silent. So a `wasted_effort` null means "nothing in what you were shown", never "nothing
+  happened" — the same distinction `sessions_compared` draws for `cli_probes`.
 
 ## The API question, and what items 2 and 11 settled about it
 
@@ -488,6 +596,16 @@ Each cost a full re-run to discover, so they are recorded here rather than relea
   appear within the hour on a session that wrote commit messages about commands. Ask what
   kind of session the corpus does not contain — and run this tool on the session that
   changes it, which is how two of its checks were found.
+- **Measure the shipping function, never a model of it.** Item 14's first sweep hand-rolled
+  its own row format to estimate the ledger, and reported the blinding invariant as **0
+  mismatches out of 196**. Re-run against the real `digest.ledger()`, the same invariant
+  showed **24** — every one the row cap under-disclosing, which is harmless, but the clean
+  number had already been written into a docstring as equality and was wrong there. Import
+  the function. If a sweep cannot call it, that is the finding.
+- **State an invariant in the direction that can hurt you.** The same 24 mismatches were
+  invisible as a problem *and* as a non-problem until the check was rewritten as `rows <=
+  tools_line` rather than `==`. An equality that is false for a benign reason gets relaxed
+  or deleted; a one-directional bound survives, and it is the one that means anything.
 - **A zero is a measurement of the query as much as of the corpus.** The most expensive
   one yet: `cli_probes` returned 0 across the whole corpus for its entire shipped life,
   the number was correct every time, and the detector was twice queued for deletion —

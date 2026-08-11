@@ -124,7 +124,8 @@ def _rereads(ctx):
     r = detect.rereads(ctx.session)
     return {**r, "fired": r["fires"],       # detector says `fires`; the registry reads `fired`
             "line": f"rereads    {r['repeats_without_change']} unchanged "
-                    f"(+{r['repeats_after_edit']} legit re-grounding) = {r['chars']:,} chars"}
+                    f"(+{r['repeats_after_edit']} legit re-grounding, "
+                    f"+{r['repeats_disjoint_slices']} different slices) = {r['chars']:,} chars"}
 
 
 @register("spill", "opportunity", evidence="evidenced",

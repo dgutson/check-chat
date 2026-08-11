@@ -161,6 +161,7 @@ class Verdict:
     scores: dict[str, dict] = field(default_factory=dict)
     candidates: list[dict] = field(default_factory=list)
     other_findings: list[dict] = field(default_factory=list)
+    wasted_effort: list[dict] = field(default_factory=list)
     problems: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     dropped: list[str] = field(default_factory=list)
@@ -185,6 +186,7 @@ class Verdict:
             "missing": self.missing,
             "candidate_verdicts": self.candidates,
             "other_findings": self.other_findings,
+            "wasted_effort": self.wasted_effort,
             "problems": self.problems,
             "warnings": self.warnings,
             "dropped": self.dropped,
@@ -296,6 +298,17 @@ def validate(obj: dict, excerpt: str | None = None) -> Verdict:
 
     v.candidates = _clean_candidates(obj.get("candidate_verdicts"), v)
     v.other_findings = _clean_findings(obj.get("other_findings"), v, hay)
+    v.wasted_effort = _clean_findings(obj.get("wasted_effort"), v, hay, "wasted_effort")
+
+    # Absent is not the same as empty, and only the empty one is an answer. `[]` says the
+    # judge looked at the ledger and found nothing, which is the expected result; a missing
+    # key says the question was never answered, and a silently-empty dimension would read
+    # as a clean one. It is a warning rather than a problem because the six scored items
+    # are what make a verdict usable — losing the whole judgment over the open-world
+    # question would be the confident zero this module exists to prevent.
+    if obj.get("wasted_effort") is None:
+        v.warnings.append("`wasted_effort` was absent — the tool-call ledger was not "
+                          "assessed; do not report dimension 3 as judged clean")
 
     if not v.scores:
         v.status = UNUSABLE
@@ -359,7 +372,8 @@ def _clean_candidates(raw, v: Verdict) -> list[dict]:
     return out
 
 
-def _clean_findings(raw, v: Verdict, hay: str | None = None) -> list[dict]:
+def _clean_findings(raw, v: Verdict, hay: str | None = None,
+                    label: str = "other_findings") -> list[dict]:
     """Drop unquoted findings here, so the reporting step cannot forget to.
 
     `other_findings` is the one item that can manufacture work out of nothing, which is
@@ -369,24 +383,28 @@ def _clean_findings(raw, v: Verdict, hay: str | None = None) -> list[dict]:
     Given the excerpt, "no quote" extends to a quote that is not *in* it — a quote nobody
     can find is the same nothing wearing quotation marks, and here the whole field is by
     contract one verbatim quote, so the match is certain enough to drop on.
+
+    `label` exists because `wasted_effort` is the same contract over a different part of
+    the excerpt — it quotes a ledger row instead of a sentence — and the second open-world
+    field must inherit this guardrail rather than grow its own copy that drifts from it.
     """
     if raw is None:
         return []
     if not isinstance(raw, list):
-        v.warnings.append("`other_findings` was not a list; ignored")
+        v.warnings.append(f"`{label}` was not a list; ignored")
         return []
     out = []
     for i, f in enumerate(raw):
         if not isinstance(f, dict):
-            v.dropped.append(f"other_findings[{i}] was not an object")
+            v.dropped.append(f"{label}[{i}] was not an object")
             continue
         quote = str(f.get("quote") or "").strip()
         finding = str(f.get("finding") or "").strip()
         if not finding:
-            v.dropped.append(f"other_findings[{i}] had no `finding` text")
+            v.dropped.append(f"{label}[{i}] had no `finding` text")
             continue
         if not quote:
-            v.dropped.append(f"other_findings[{i}] had no quote: {finding[:60]!r}")
+            v.dropped.append(f"{label}[{i}] had no quote: {finding[:60]!r}")
             continue
 
         checked = quote_appears(quote, hay) if hay is not None else None
@@ -394,8 +412,8 @@ def _clean_findings(raw, v: Verdict, hay: str | None = None) -> list[dict]:
             v.quotes_checked += 1
             v.quotes_found += int(checked)
         if checked is False:
-            v.unverified.append(f"other_findings[{i}]: {_short(normalize(quote))}")
-            v.dropped.append(f"other_findings[{i}] quotes text that is not in the "
+            v.unverified.append(f"{label}[{i}]: {_short(normalize(quote))}")
+            v.dropped.append(f"{label}[{i}] quotes text that is not in the "
                              f"excerpt: {finding[:60]!r}")
             continue
 
@@ -435,7 +453,7 @@ def render(v: Verdict) -> str:
     if v.verified_against:
         lines.append(f"  quotes: {v.quotes_found}/{v.quotes_checked} verified against "
                      f"{v.verified_against:,} chars of the excerpt")
-    elif v.scores or v.other_findings:
+    elif v.scores or v.other_findings or v.wasted_effort:
         lines.append("  quotes: NOT CHECKED — re-run with --against <the --emit dir>")
     for u in v.unverified:
         lines.append(f"  unverified: {u}")
@@ -448,6 +466,8 @@ def render(v: Verdict) -> str:
         lines.append(f"  dropped: {d}")
     if v.other_findings:
         lines.append(f"  other_findings kept: {len(v.other_findings)}")
+    if v.wasted_effort:
+        lines.append(f"  wasted_effort kept: {len(v.wasted_effort)}")
     if v.status != OK:
         lines.append("")
         lines.append("RETRY HINT (re-dispatch once with this appended, then stop):")

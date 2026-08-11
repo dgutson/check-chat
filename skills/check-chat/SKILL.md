@@ -91,7 +91,9 @@ makes the whole command worthless. Equally, do not tell the judge what you expec
 to find; you would be handing it the bias it exists to avoid.
 
 It returns strict JSON: the six items scored 0-3 with quoted evidence,
-`candidate_verdicts` for each supplied candidate, and `other_findings`.
+`candidate_verdicts` for each supplied candidate, and two open-world lists —
+`other_findings` about the conversation and `wasted_effort` about the tool-call ledger
+now carried inside the excerpt.
 
 ## 2b. Validate the reply — do not eyeball it
 
@@ -125,11 +127,14 @@ longer have to police them by hand:
 
 - **A non-zero score with no evidence is rejected**, not reported. The other items
   survive — one bad field must never erase the whole dimension.
-- **`other_findings` entries with no quote are dropped** before you ever see them.
-  Anything the validator kept has already passed that bar.
-- **Quotes are matched against the excerpt.** A `quote` in `other_findings` that is not in
+- **`other_findings` and `wasted_effort` entries with no quote are dropped** before you
+  ever see them. Anything the validator kept has already passed that bar.
+- **Quotes are matched against the excerpt.** A `quote` in either list that is not in
   the evidence is dropped exactly like a missing one — a quote nobody can find is the same
-  nothing wearing quotation marks, and that field is the one that can invent work.
+  nothing wearing quotation marks, and those are the fields that can invent work.
+- **A missing `wasted_effort` key is reported, not treated as empty.** `[]` means the
+  ledger was assessed and was clean; absent means the question went unanswered, and the
+  two must not read alike.
 
 A scored item is treated differently on purpose, because pulling quotes out of prose is a
 heuristic and a real sycophancy finding must not die over a stray character:
@@ -254,9 +259,11 @@ Ranked by evidence quality. Lead with the first item that fired:
    cannot discriminate. Its value is ordering.
 3. **`producers`** — one expensive command re-run over unchanged input purely to
    filter it differently. Rare and unambiguous when it fires.
-4. **`rereads`** — re-reads with no intervening edit. Quote
-   `repeats_after_edit` alongside: those are legitimate re-grounding, and saying so is
-   what makes the honest number credible.
+4. **`rereads`** — re-reads with no intervening edit *and* overlapping the earlier read.
+   Quote **both** exclusions alongside it: `repeats_after_edit` is legitimate
+   re-grounding, and `repeats_disjoint_slices` is different parts of one file, which
+   fetch nothing twice. Saying what was excluded is what makes the number credible — and
+   each was once counted as waste, the second in 71% of corpus repeats.
 5. **`spill`** — a result the harness judged too big to keep, read back in anyway. If
    present it is usually n=1; report it as n=1.
 6. **`cli_probes.recurring`** — command syntax re-derived here *and* in other sessions
@@ -274,6 +281,23 @@ Ranked by evidence quality. Lead with the first item that fired:
    Suggest a setting change only when `fired` is true; a single cheap-looking turn
    proves nothing, because a short question can legitimately need deep reasoning.
 
+8. **`wasted_effort`** — the judge's open-world answer for this dimension, and the only
+   part of it that can name a pattern nobody built a check for. Items 1-7 are a closed
+   world: they find what someone thought to ask, so a novel way of wasting effort is
+   invisible to every one of them at once. These entries close that.
+
+   Report them **last within this dimension**, and treat one as evidence-grade only for
+   what its quoted ledger row actually shows. The validator has already dropped entries
+   with no quote and entries whose quote is not in the excerpt, so do not re-police them.
+
+   **Discard any entry that reports a repeat** — a file edited twice, a `Read` after an
+   `Edit`, a test re-run after a change. Those are ordinary work, items 1-7 count them
+   properly with the exclusions that make the count correct, and the judge is told not to
+   raise them. One that arrives anyway is the judge counting worse than Python did.
+
+   If `wasted_effort` was **absent** from the reply, `--verdict` says so in a warning.
+   Then this dimension has an unjudged half, and you must not present it as clean.
+
 Multiply by `batching.solo_share` when explaining cost: it is the number that converts
 each finding into round trips, and the only one that explains magnitude.
 
@@ -288,7 +312,7 @@ means the context is full, which is not the same as degraded.
 
 | Result | Outcome |
 |---|---|
-| everything ≤ 1, no quoted `other_findings`, nothing in dimension 3 | Nothing to fix. Say so in two lines and stop. |
+| everything ≤ 1, no quoted `other_findings` or `wasted_effort`, nothing in dimension 3 | Nothing to fix. Say so in two lines and stop. |
 | any item ≥ 2, `should_restart` ≤ 1 | **Repair prompt** — the session is worth keeping |
 | a quoted `other_finding` the user can act on | **Repair prompt**, written for that finding |
 | `should_restart` ≥ 2 | Offer `/handoff` and a fresh chat |

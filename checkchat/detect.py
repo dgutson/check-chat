@@ -228,12 +228,41 @@ def mutation_index(
     return per_file, sorted(repo_wide)
 
 
+def _span(call: Call) -> tuple[float, float] | None:
+    """Which lines a read covered. `None` means the whole file, which covers everything."""
+    p = call.params if isinstance(call.params, dict) else {}
+    off, lim = p.get("offset"), p.get("limit")
+    if not isinstance(off, int) and not isinstance(lim, int):
+        return None
+    start = off if isinstance(off, int) else 0
+    return (start, start + lim if isinstance(lim, int) else float("inf"))
+
+
+def _overlaps(a, b) -> bool:
+    if a is None or b is None:
+        return True
+    return a[0] < b[1] and b[0] < a[1]
+
+
 def rereads(sess: Session) -> dict:
     """Re-reads of a file that nothing had changed in between.
 
-    The naive version of this rule — count any repeated Read — overstates waste by
-    about two thirds, because most repeats follow an edit and are correct
-    re-grounding. Subtracting those is the whole detector.
+    Two things have to be subtracted, and each was measured to be most of the number.
+
+    The naive rule — count any repeated Read — overstates waste by about two thirds,
+    because most repeats follow an edit and are correct re-grounding.
+
+    The second is the same mistake one level down, and it shipped: grouping by path alone
+    counts **different slices of one file** as a repeat. Reading lines 1-70 and then
+    300-405 fetches nothing twice, and on the corpus that was **27 of 38** reported
+    repeats — 71% — collapsing the firing rate from 6 of 54 sessions to 1. An
+    `evidenced`-tier check telling a user they wasted tokens they did not waste is item
+    4's failure with the sign flipped, so spans are compared and only overlapping reads
+    count. A whole-file read has no span and overlaps everything, correctly.
+
+    Pairing is against **every** earlier still-valid read rather than the previous one,
+    because consecutive pairing gets `A, B, A` wrong: both pairs are disjoint while the
+    file's first slice was genuinely fetched twice.
     """
     per_file, repo_wide = mutation_index(sess)
     by_path: dict[str, list[Call]] = defaultdict(list)
@@ -243,18 +272,29 @@ def rereads(sess: Session) -> dict:
             if p:
                 by_path[p].append(c)
 
-    rows, wasted, regrounding = [], 0, 0
+    rows, wasted, regrounding, disjoint = [], 0, 0, 0
     for path, calls in by_path.items():
         if len(calls) < 2:
             continue
         muts = sorted(per_file.get(os.path.basename(path), []) + repo_wide)
         clean = 0
-        for a, b in zip(calls, calls[1:]):
-            if any(a.step <= m <= b.step for m in muts):
-                regrounding += 1
-            else:
+        for i, b in enumerate(calls[1:], start=1):
+            sb = _span(b)
+            repeat = still_valid = False
+            for a in calls[:i]:
+                if any(a.step <= m <= b.step for m in muts):
+                    continue            # changed since `a`; re-reading it is re-grounding
+                still_valid = True
+                if _overlaps(_span(a), sb):
+                    repeat = True
+                    break
+            if repeat:
                 clean += 1
                 wasted += b.result_chars
+            elif still_valid:
+                disjoint += 1           # a different part of the file: not waste at all
+            else:
+                regrounding += 1
         if clean:
             rows.append({
                 "path": path,
@@ -268,7 +308,10 @@ def rereads(sess: Session) -> dict:
     total = sum(r["unchanged_repeats"] for r in rows)
     return {
         "repeats_without_change": total,
-        "repeats_after_edit": regrounding,   # legitimate; reported so the number is honest
+        # Both subtractions are reported, because a number is credible only next to what
+        # it excludes — and each of these was once counted as waste.
+        "repeats_after_edit": regrounding,
+        "repeats_disjoint_slices": disjoint,
         "chars": wasted,
         "fires": total >= REREAD_MIN,
         "files": rows[:5],

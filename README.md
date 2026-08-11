@@ -69,13 +69,21 @@ registry where the **session under test could invoke it on itself** — a degrad
 context grading its own work is the exact failure this design exists to prevent.
 Agents are dispatched; they cannot self-invoke.
 
-It is asked six scored questions and **one open one**: *is anything else going wrong
-that those six did not ask about?* Every check in this plugin is a closed world — each
-finds only what someone thought to write a detector for, so the failure modes nobody
-anticipated are invisible to all of them at once. The judge already has the excerpt in
-front of it, so that question costs nothing, and it is the only part of the design that
-can see outside its own categories. Answers must carry a verbatim quote, and an empty
-answer is the expected one.
+It is asked six scored questions and **two open ones**. Every check in this plugin is a
+closed world — each finds only what someone thought to write a detector for, so the
+failure modes nobody anticipated are invisible to all of them at once. The two open
+questions are the only part of the design that can see outside its own categories:
+
+- *Is anything else going wrong that those six did not ask about?* — over the conversation.
+- *Looking at the tool calls, was effort spent that the request did not need?* — over a
+  ledger of what each call actually touched, which is carried inside the excerpt. Without
+  it the judge saw only *how many* calls an exchange made, never on what, so it could not
+  see an edit to a file placed off limits or a claimed change with no edit behind it.
+
+Answers must carry a verbatim quote, checked against the excerpt, and an empty answer is
+the expected one. The waste question is explicitly told **not** to report repeated calls:
+Python counts those, with the exclusions that make the count correct, and a second worse
+count of an already-measured thing is how a judge manufactures false positives.
 
 ## What it looks for, and why those things
 
