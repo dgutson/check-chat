@@ -52,8 +52,26 @@ _PATHY = re.compile(r"[A-Za-z0-9_./~-]*[A-Za-z0-9_-]\.[A-Za-z0-9]+|[A-Za-z0-9_.~
 _SAVED_TO = re.compile(r"saved to:\s*(\S+)")
 _SPILL_PATH = re.compile(r"tool-results/[\w.-]+\.\w+")
 
+# The substring a transcript must contain before it can possibly hold a probe. Used to
+# pre-filter the corpus in `discover.siblings`, so a bounded scan budget is spent only on
+# sessions that could contribute — see that docstring for why that is correctness, not
+# just speed.
+PROBE_NEEDLE = "--help"
+
 # `foo bar --help`, plus the wrappers that hide the real command name.
-_HELP = re.compile(r"([\w./-]+(?:\s+[a-z][\w-]*){0,2})\s+--help")
+#
+# Horizontal whitespace only, never `\s`: a Bash call is routinely a multi-line script,
+# and `\s` happily spans the newline, splicing the tail of one line onto the `--help` of
+# the next and inventing a command nobody ran. Measured on the corpus: `pip3 install
+# --help` was reported as the family `--version pip3 install`, glued across a line break.
+# The roadmap has this same class of error twice under "do not glue lines together".
+#
+# Three trailing words, not two, because the leftmost-match rule punishes a short limit
+# in a way that is easy to miss: at two, `claude plugin marketplace add --help` cannot
+# match starting at `claude`, so the match slides right and the family comes out as
+# `plugin marketplace add` — a name implying a `plugin` executable that does not exist.
+_H = r"[^\S\n]"
+_HELP = re.compile(rf"([\w./-]+(?:{_H}+[a-z][\w-]*){{0,3}}){_H}+--help")
 _WRAPPERS = re.compile(
     r"^(?:cd\s+\S+\s*(?:&&|;)\s*|sudo\s+(?:-A\s+)?|env\s+\w+=\S+\s+|timeout\s+\S+\s+|nohup\s+)+"
 )
@@ -210,12 +228,41 @@ def mutation_index(
     return per_file, sorted(repo_wide)
 
 
+def _span(call: Call) -> tuple[float, float] | None:
+    """Which lines a read covered. `None` means the whole file, which covers everything."""
+    p = call.params if isinstance(call.params, dict) else {}
+    off, lim = p.get("offset"), p.get("limit")
+    if not isinstance(off, int) and not isinstance(lim, int):
+        return None
+    start = off if isinstance(off, int) else 0
+    return (start, start + lim if isinstance(lim, int) else float("inf"))
+
+
+def _overlaps(a, b) -> bool:
+    if a is None or b is None:
+        return True
+    return a[0] < b[1] and b[0] < a[1]
+
+
 def rereads(sess: Session) -> dict:
     """Re-reads of a file that nothing had changed in between.
 
-    The naive version of this rule — count any repeated Read — overstates waste by
-    about two thirds, because most repeats follow an edit and are correct
-    re-grounding. Subtracting those is the whole detector.
+    Two things have to be subtracted, and each was measured to be most of the number.
+
+    The naive rule — count any repeated Read — overstates waste by about two thirds,
+    because most repeats follow an edit and are correct re-grounding.
+
+    The second is the same mistake one level down, and it shipped: grouping by path alone
+    counts **different slices of one file** as a repeat. Reading lines 1-70 and then
+    300-405 fetches nothing twice, and on the corpus that was **27 of 38** reported
+    repeats — 71% — collapsing the firing rate from 6 of 54 sessions to 1. An
+    `evidenced`-tier check telling a user they wasted tokens they did not waste is item
+    4's failure with the sign flipped, so spans are compared and only overlapping reads
+    count. A whole-file read has no span and overlaps everything, correctly.
+
+    Pairing is against **every** earlier still-valid read rather than the previous one,
+    because consecutive pairing gets `A, B, A` wrong: both pairs are disjoint while the
+    file's first slice was genuinely fetched twice.
     """
     per_file, repo_wide = mutation_index(sess)
     by_path: dict[str, list[Call]] = defaultdict(list)
@@ -225,18 +272,29 @@ def rereads(sess: Session) -> dict:
             if p:
                 by_path[p].append(c)
 
-    rows, wasted, regrounding = [], 0, 0
+    rows, wasted, regrounding, disjoint = [], 0, 0, 0
     for path, calls in by_path.items():
         if len(calls) < 2:
             continue
         muts = sorted(per_file.get(os.path.basename(path), []) + repo_wide)
         clean = 0
-        for a, b in zip(calls, calls[1:]):
-            if any(a.step <= m <= b.step for m in muts):
-                regrounding += 1
-            else:
+        for i, b in enumerate(calls[1:], start=1):
+            sb = _span(b)
+            repeat = still_valid = False
+            for a in calls[:i]:
+                if any(a.step <= m <= b.step for m in muts):
+                    continue            # changed since `a`; re-reading it is re-grounding
+                still_valid = True
+                if _overlaps(_span(a), sb):
+                    repeat = True
+                    break
+            if repeat:
                 clean += 1
                 wasted += b.result_chars
+            elif still_valid:
+                disjoint += 1           # a different part of the file: not waste at all
+            else:
+                regrounding += 1
         if clean:
             rows.append({
                 "path": path,
@@ -250,7 +308,10 @@ def rereads(sess: Session) -> dict:
     total = sum(r["unchanged_repeats"] for r in rows)
     return {
         "repeats_without_change": total,
-        "repeats_after_edit": regrounding,   # legitimate; reported so the number is honest
+        # Both subtractions are reported, because a number is credible only next to what
+        # it excludes — and each of these was once counted as waste.
+        "repeats_after_edit": regrounding,
+        "repeats_disjoint_slices": disjoint,
         "chars": wasted,
         "fires": total >= REREAD_MIN,
         "files": rows[:5],
@@ -384,9 +445,101 @@ def producers(sess: Session) -> list[dict]:
 
 # ---------------------------------------------------------------- 7. CLI probes
 
+# `<<DELIM`, `<<'DELIM'`, `<<-DELIM` — the start of a heredoc, whose body is data the
+# shell feeds to a command rather than commands the shell runs. Requiring a word
+# character after the `<<` keeps arithmetic left-shift (`$((1 << 2))`) out.
+_HEREDOC = re.compile(r"<<-?\s*(['\"]?)([A-Za-z_][\w-]*)\1")
+
+
+def _shell_code(cmd: str) -> str:
+    """The parts of a Bash command the shell will execute, with *data* removed.
+
+    Found by running `/check-chat` on the session that had just finished repairing this
+    detector, which is the only reason it was found: it reported `pip3 install` as syntax
+    re-derived here *and* in another session, and no such command had been run. `_family`
+    scanned the whole `command` parameter, so text that merely *discusses* a command
+    counted as running it.
+
+    Two kinds of data carry command-shaped text, and both had to go — the first attempt
+    fixed only one and the corpus said so:
+
+    * **Heredoc bodies.** The phantom came from a `git commit -F - <<'EOF'` body: a commit
+      message describing the `--help` parse bug fixed minutes earlier.
+    * **Quoted literals.** Stripping heredocs alone left the firing count unchanged at
+      10 of 18 sessions, because the same phantom arrived again through
+      `echo "=== did I actually run 'pip3 install --help' ... ==="` — a shell label.
+
+    The hole predates the cross-project change, but that change **raised its
+    consequence**: a bogus family used to inflate a count inside one session, and can now
+    manufacture a cross-session "this should be a skill" claim, which is the loudest thing
+    this detector says. Note the shape of the near-miss — the cross-project fix was
+    measured against the corpus, the corpus contained no prose about `--help`, and so
+    nothing failed until the tool was pointed at a session that wrote *about* commands.
+    A corpus cannot contain the artifact a new kind of session will produce.
+    """
+    return _strip_quoted(_strip_heredocs(cmd))
+
+
+def _strip_quoted(cmd: str) -> str:
+    """Replace quoted literals with a space, one line at a time.
+
+    **Line-local on purpose.** An unbalanced quote is ordinary in these commands — an
+    apostrophe in an `echo`, a `sed` expression — and letting the quote state run to the
+    end of a multi-line script would swallow every real command after it. Confined to one
+    line, a mis-pair costs that line and nothing else.
+
+    Command substitution is deliberately not carved out. `$(gron --help)` inside quotes
+    really does run a probe, so stripping it loses a true positive — but there are **0 of
+    those on the corpus** and the carve-out costs a nested parser, so it is left undone
+    and written down here instead of guessed at.
+    """
+    out: list[str] = []
+    for line in cmd.split("\n"):
+        buf: list[str] = []
+        quote = ""
+        i = 0
+        while i < len(line):
+            ch = line[i]
+            if quote:
+                if ch == "\\" and quote == '"':      # \" does not close a double quote
+                    i += 2
+                    continue
+                if ch == quote:
+                    quote = ""
+                    buf.append(" ")                  # the literal becomes a word boundary
+                i += 1
+                continue
+            if ch in "'\"":
+                quote = ch
+                i += 1
+                continue
+            buf.append(ch)
+            i += 1
+        out.append("".join(buf))
+    return "\n".join(out)
+
+
+def _strip_heredocs(cmd: str) -> str:
+    """Drop heredoc bodies, keeping the lines that actually execute."""
+    lines = cmd.split("\n")
+    out: list[str] = []
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        out.append(line)
+        # One line may open several heredocs; their bodies then follow in that order.
+        delims = [m.group(2) for m in _HEREDOC.finditer(line)]
+        i += 1
+        for delim in delims:
+            while i < len(lines) and lines[i].strip() != delim:
+                i += 1
+            i += 1                      # and the terminator line itself
+    return "\n".join(out)
+
+
 def _family(cmd: str) -> str:
-    """The command family behind a `--help`, with wrappers stripped."""
-    stripped = _WRAPPERS.sub("", cmd.strip())
+    """The command family behind a `--help`, looking only at what the shell would run."""
+    stripped = _WRAPPERS.sub("", _shell_code(cmd).strip())
     m = _HELP.search(stripped)
     if not m:
         return ""
@@ -397,12 +550,29 @@ def _family(cmd: str) -> str:
 def cli_probes(sess: Session, others: list[Session] | None = None) -> dict:
     """Command-line syntax the session had to re-derive by asking for `--help`.
 
-    A family probed in more than one session is the strongest "this should be a
-    skill" signal available, but it is also the easiest to fake: forked transcripts
-    share history, so an undeduplicated corpus manufactures cross-session repeats
-    out of one session counted twice. `others` must already be fork-deduplicated —
-    `discover.siblings()` does that — and this function will not count a family as
-    cross-session on the strength of a single other log.
+    A family probed in more than one session is the strongest "this should be a skill"
+    signal available, but it is also the easiest to fake: forked transcripts share
+    history, so an undeduplicated corpus manufactures cross-session repeats out of one
+    session counted twice. `others` must already be fork-deduplicated —
+    `discover.siblings()` does that.
+
+    **What `others` must contain, and the bug that lived here.** For two years of
+    roadmap this function's cross-session half returned zero on every real session, and
+    it was nearly cut for it. The cause was not this code: `others` was every session
+    *in the same project directory*, and re-derived CLI syntax is inherently a
+    cross-*project* pattern — you relearn `claude plugin` syntax in whatever repo you
+    happen to be sitting in. Note the giveaway, because it is the general lesson: the
+    payoff is a **skill**, and a skill is installed per user, not per directory, so the
+    comparison population was answering a narrower question than the detector asks.
+    Given machine-wide `others` it fires on the same corpus that measured zero — 8 of 51
+    sessions, `claude plugin` re-derived in 4 sessions across 4 separate projects.
+
+    A prior docstring here claimed this "will not count a family as cross-session on the
+    strength of a single other log", i.e. a threshold of two. The code has always said
+    one, so the claim was a guard that did not exist — removed rather than implemented,
+    because the fork protection it was describing is really delivered by the dedup in
+    `siblings()`, and a second unmeasured threshold on top of that is how you get a
+    detector that cannot fire.
     """
     here = Counter()
     for c in sess.calls:
@@ -413,7 +583,11 @@ def cli_probes(sess: Session, others: list[Session] | None = None) -> dict:
 
     across: dict[str, int] = Counter()
     for other in others or []:
-        fams = {_family(_cmd_of(c)) for c in other.calls if c.tool == "Bash"}
+        # `declined` excluded on both sides: a command the user refused was never run,
+        # so its syntax was never re-derived. `here` has always filtered it; this side
+        # did not, which let a refused probe in another session corroborate this one.
+        fams = {_family(_cmd_of(c)) for c in other.calls
+                if c.tool == "Bash" and not c.declined}
         for fam in fams - {""}:
             across[fam] += 1
 
@@ -481,7 +655,42 @@ def failures(sess: Session) -> dict:
     }
 
 
+# --------------------------------------------------- 10. completeness of the record
+
+def continuity(sess: Session) -> dict:
+    """Was the whole transcript read, or is every count above computed on a fragment?
+
+    A transcript past the read cap is read from its **tail**, so every count is then
+    computed on the remainder while looking exactly like a count over the whole thing.
+    That was true from the first version and reported nowhere, which is the worst of
+    the three available states: measured, wrong, and confident.
+
+    This is not a detector and cannot be wrong: the condition is `size > cap`, a fact
+    this tool creates about its own read. It reports magnitude rather than a boolean
+    because "truncated" with no number invites the reader to assume it was marginal.
+
+    A **compaction** clause lived here too, and was cut for lack of evidence rather
+    than lack of value — the mechanism is real and the reasoning about it is preserved
+    in the roadmap. Nothing detects it today, so nothing claims to.
+    """
+    dropped_mb = sess.dropped_bytes / (1024 * 1024)
+    warnings = []
+    if sess.truncated:
+        warnings.append(
+            f"transcript truncated: the first {dropped_mb:,.1f} MB were never read — "
+            f"every count here is a lower bound computed on the remainder"
+        )
+    return {
+        "fired": bool(sess.truncated),
+        "truncated": sess.truncated,
+        "dropped_bytes": sess.dropped_bytes,
+        "warnings": warnings,
+        "summary": "; ".join(warnings) or "whole transcript read",
+    }
+
+
 __all__ = [
     "dumps", "dump_reason", "partial_use", "rereads", "mutation_index",
     "batching", "spill", "producers", "cli_probes", "grounding", "failures",
+    "continuity",
 ]

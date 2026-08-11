@@ -11,6 +11,13 @@ states how long the session is. What survives is the goal (the opening turns, wh
 constraints get stated and against which drift is measurable) and the recent work.
 A gap marker sits between them: it admits that material was cut without revealing
 how much.
+
+A second marker was designed and then removed: one saying the excerpt straddled a
+**compaction**, because re-asking for something stated above such a seam is correct
+behaviour rather than `confusion`, and a constraint from above it was lost rather than
+ignored. The reasoning holds; there is just no way to detect a compaction yet. See the
+roadmap — it is worth restoring in full the day a compacted transcript exists to check
+it against, and the marker itself is six lines.
 """
 
 from __future__ import annotations
@@ -23,6 +30,12 @@ HEAD_TURNS = 2              # where the goal and the constraints live
 TAIL_TURNS = 10             # where drift shows up
 PROMPT_CHARS = 1200
 REPLY_CHARS = 1400
+
+LEDGER_ROWS = 120           # measured on 54 sessions: median 20 rows, p90 126, max 184
+LEDGER_TARGET_W = 72
+
+GAP = "[... earlier exchanges omitted ...]"
+LEDGER_CUT = "[... further calls omitted ...]"
 
 # Blinding has to survive the conversation not being in English. A Spanish session
 # saying "como dije en el turno 47" leaks exactly what an English one saying "as I
@@ -65,6 +78,95 @@ def selected(sess: Session) -> tuple[list[int], bool]:
     return head + tail, True
 
 
+def _size(n: int) -> str:
+    """A result's size, bucketed. Per-call sizes disclose nothing about session length."""
+    if n <= 0:
+        return ""
+    if n < 1000:
+        return str(n)
+    if n < 1_000_000:
+        return f"{n // 1000}k"
+    return f"{n / 1e6:.1f}M"
+
+
+def _target(key: str) -> str:
+    """One line, truncated where it costs the least meaning.
+
+    A path is identified by its *tail* — the basename is the part a finding names — while a
+    command is identified by its *head*, because what it ran comes first and `| head -40`
+    at the end is noise. Splitting on whitespace rather than on the tool name keeps this
+    right for `pattern` and `query` keys too, which read like commands and belong to tools
+    that also take paths.
+    """
+    key = " ".join((key or "").split())
+    if len(key) <= LEDGER_TARGET_W:
+        return key
+    if " " in key:                                  # command-shaped: the head carries it
+        return key[:LEDGER_TARGET_W - 1] + "…"
+    keep = (LEDGER_TARGET_W - 1) // 2               # path-shaped: keep the basename
+    return f"{key[:keep]}…{key[-keep:]}"
+
+
+def _slice(params: dict) -> str:
+    """Which part of a file was read, when it was not the whole thing.
+
+    Without this, three reads of different slices of one file are three identical-looking
+    rows, and the judge is being shown a repeat that did not happen — manufacturing the
+    exact false positive `ledger`'s docstring warns it away from. The distinction is also
+    the difference between a `partial_use` proof and ordinary work.
+    """
+    if not isinstance(params, dict):
+        return ""
+    off, lim = params.get("offset"), params.get("limit")
+    if not isinstance(off, int) and not isinstance(lim, int):
+        return ""
+    start = off if isinstance(off, int) else 0
+    if isinstance(lim, int):
+        return f" [lines {start}-{start + lim}]"
+    return f" [from line {start}]"
+
+
+def ledger(sess: Session) -> str:
+    """What the tool calls actually touched, for the exchanges the excerpt contains.
+
+    The prose digest says *how many* calls an exchange made (`[tools: Read x3]`) and never
+    *what they acted on*, so one class of finding is invisible to the judge and to every
+    Python check at once: an `Edit` to a file the user placed off limits, an answer
+    claiming a change no `Edit` performed, a long hunt through the wrong directory. The
+    counting checks cannot name those because nobody anticipated them — that is the hole
+    — and the judge could not see them because targets never reached it.
+
+    **Blinding survives by construction**, which is the only reason this can ship. Rows
+    cover exactly the exchanges already in the excerpt and carry the same renumbered
+    `E<n>` label, so the ledger discloses no count the `[tools: ...]` lines did not
+    already. The invariant is **one-directional** — never *more* rows than that line
+    states, sometimes fewer — and the direction is the whole point, so do not restate it
+    as equality: `LEDGER_ROWS` truncates 7 of 54 corpus sessions, which under-discloses 24
+    exchanges and leaks nothing. Measured over the shipping code on 54 sessions: **0
+    over-disclosing exchanges, 0 mislabelled rows**, all 24 under-disclosures inside a
+    capped session, and 89% of all calls in scope. Targets are scrubbed like prose,
+    because a command can contain the position reference the excerpt withholds.
+
+    What it must **not** be read for is counting repeats. Python counts them better, and
+    with the exclusions that make the count correct: two `Edit`s to one file is ordinary
+    work, and 10 of those 54 sessions contain such a repeat while `rereads`, `producers`
+    and `partial_use` are all correctly quiet. A judge asked "what looks wasteful" scores
+    exactly those as findings, so the prompt fences them off by name.
+    """
+    idxs, _ = selected(sess)
+    rows: list[str] = []
+    for label, i in enumerate(idxs, start=1):
+        for c in (c for c in sess.calls if c.turn == i):
+            if len(rows) >= LEDGER_ROWS:
+                rows.append(LEDGER_CUT)
+                return "\n".join(rows)
+            flag = "  DECLINED" if c.declined else ("  FAILED" if c.ok is False else "")
+            size = _size(c.result_chars)
+            rows.append(f"E{label}  {c.tool}  {_scrub(_target(c.key))}{_slice(c.params)}"
+                        f"{f'  ({size})' if size else ''}{flag}")
+    return "\n".join(rows)
+
+
 def build(sess: Session) -> str:
     """A blinded transcript excerpt, ready to hand to a subagent verbatim."""
     idxs, gapped = selected(sess)
@@ -73,7 +175,7 @@ def build(sess: Session) -> str:
 
     for label, i in enumerate(idxs, start=1):
         if gapped and prev is not None and i != prev + 1:
-            lines.append("\n[... earlier exchanges omitted ...]\n")
+            lines.append(f"\n{GAP}\n")
         prev = i
         t = sess.turns[i]
         lines.append(f"### Exchange {label}")
@@ -84,6 +186,16 @@ def build(sess: Session) -> str:
         if tools:
             lines.append(tools)
         lines.append("")
+
+    # The ledger goes inside the excerpt rather than beside it, and that placement is the
+    # whole trick: `verdict.check` verifies the judge's quotations against whatever the
+    # excerpt contains, so a finding that cites a tool call becomes checkable for free —
+    # by the same machinery, with no second verification path to keep in step.
+    table = ledger(sess)
+    if table:
+        lines += ["### Tool calls, by exchange",
+                  "`E<n>` is `Exchange <n>` above. Sizes are the result's, in characters.",
+                  "", table]
 
     return "\n".join(lines).strip()
 
@@ -96,12 +208,13 @@ def stats(sess: Session) -> dict:
         "responses": len(sess.steps),
         "calls": len(sess.calls),
         "depth_tokens": sess.depth,
-        "compactions": sess.compactions,
         "truncated": sess.truncated,
+        "dropped_bytes": sess.dropped_bytes,
         "model": sess.model,
         "digest_exchanges": len(idxs),
         "digest_gapped": gapped,
     }
 
 
-__all__ = ["build", "stats", "selected", "HEAD_TURNS", "TAIL_TURNS"]
+__all__ = ["build", "ledger", "stats", "selected", "GAP", "LEDGER_CUT",
+           "HEAD_TURNS", "TAIL_TURNS", "LEDGER_ROWS"]

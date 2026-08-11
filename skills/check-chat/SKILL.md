@@ -91,7 +91,9 @@ makes the whole command worthless. Equally, do not tell the judge what you expec
 to find; you would be handing it the bias it exists to avoid.
 
 It returns strict JSON: the six items scored 0-3 with quoted evidence,
-`candidate_verdicts` for each supplied candidate, and `other_findings`.
+`candidate_verdicts` for each supplied candidate, and two open-world lists —
+`other_findings` about the conversation and `wasted_effort` about the tool-call ledger
+now carried inside the excerpt.
 
 ## 2b. Validate the reply — do not eyeball it
 
@@ -100,10 +102,17 @@ yourself. Checking JSON shape is arithmetic, and this plugin does not spend mode
 attention on arithmetic.
 
 ```bash
-checkchat --verdict <<'JUDGE'
+checkchat --verdict --against <the DIR from step 1> <<'JUDGE'
 <the judge's reply, verbatim>
 JUDGE
 ```
+
+**Always pass `--against`.** It is the directory `--emit` printed in step 1 — the evidence
+the judge was actually shown — and it is what turns "the judge quoted something" into "the
+judge quoted something that exists". Without it every quotation is taken on trust and the
+output says `quotes: NOT CHECKED`, which is the one line in this report you should never
+be relaxed about. It costs nothing: the comparison is a substring match on a file you
+already wrote, and **you still do not read the excerpt yourself.**
 
 Act on the **exit code**:
 
@@ -113,13 +122,29 @@ Act on the **exit code**:
 | `1` | **salvaged** — some items usable, some not | proceed with what survived, and **say in the report which items are missing and why** |
 | `2` | unusable | re-dispatch the judge **once**, appending the printed `RETRY HINT`. If the second reply is still unusable, report the deterministic half alone and say plainly that the independent read failed |
 
-It also enforces two rules that used to be requests rather than checks, so you no
+It also enforces three rules that used to be requests rather than checks, so you no
 longer have to police them by hand:
 
 - **A non-zero score with no evidence is rejected**, not reported. The other items
   survive — one bad field must never erase the whole dimension.
-- **`other_findings` entries with no quote are dropped** before you ever see them.
-  Anything the validator kept has already passed that bar.
+- **`other_findings` and `wasted_effort` entries with no quote are dropped** before you
+  ever see them. Anything the validator kept has already passed that bar.
+- **Quotes are matched against the excerpt.** A `quote` in either list that is not in
+  the evidence is dropped exactly like a missing one — a quote nobody can find is the same
+  nothing wearing quotation marks, and those are the fields that can invent work.
+- **A missing `wasted_effort` key is reported, not treated as empty.** `[]` means the
+  ledger was assessed and was clean; absent means the question went unanswered, and the
+  two must not read alike.
+
+A scored item is treated differently on purpose, because pulling quotes out of prose is a
+heuristic and a real sycophancy finding must not die over a stray character:
+
+| output | what it means | what you do |
+|---|---|---|
+| `[quote not in excerpt]` beside a score | none of its quotations were found | **Report the finding if you report it at all, but never reproduce the quoted words.** They may be paraphrase; they may be invention. You cannot tell, and the user cannot either |
+| `unverified:` lines | the exact spans that were not found | Do not put any of them in the report |
+| `quotes: 0/0 verified` | it quoted nothing checkable | Same as the no-quotation warning below |
+| `quotes: NOT CHECKED` | you forgot `--against` | Re-run step 2b with it |
 
 `dropped:` and `warning:` lines are informational. A warning ("scored 2 but the
 evidence contains no quotation") is worth a glance before you quote it in the report,
@@ -144,6 +169,7 @@ check's `dimension`, and let its `evidence` field decide how loudly you report i
 
 | `evidence` | How to report it |
 |---|---|
+| `caveat` | Qualifies every other number. **Say it first, above the dimensions**, in one line — then report the rest normally. |
 | `proof` | Carries its own ground truth. **Lead with it.** |
 | `evidenced` | Rare and unambiguous. Report with the specifics quoted. |
 | `ranked` | Fires in most sessions and cannot discriminate. **Ranked table, never a verdict.** |
@@ -154,11 +180,26 @@ check's `dimension`, and let its `evidence` field decide how loudly you report i
 If a check reports an `error`, say so in one line and carry on — one broken check does
 not invalidate the rest.
 
+### Caveats — read these before you trust the numbers
+
+A fired `caveat` check qualifies everything else in the report, so it is the one thing
+you must not bury. Its `warnings` list is already written for the user; quote it rather
+than paraphrasing.
+
+Today there is one: `continuity` fires when the transcript was larger than the read cap,
+so it was read **from its tail**. Every count in dimension 3 is then a lower bound on a
+fragment — say that once, plainly, and do not present the totals as complete.
+`dropped_bytes` says how much was never read.
+
 ### `other_findings` — the one thing no check can see
 
 Report these **after** the three dimensions, under their own heading, and only when
 they carry a quote. Drop silently any entry that does not, and drop any that merely
 restates one of the six scored items — that is the judge padding, not finding.
+
+The validator has already dropped both the unquoted and the unfindable ones, so an entry
+that reached you has a quote and that quote is in the excerpt. **Do not re-police this by
+hand** — that is the arithmetic this step exists to avoid.
 
 Give a surviving entry the same weight as a scored item: it came from the same read of
 the same excerpt, and the only reason it has no score is that nobody knew to ask for
@@ -218,20 +259,44 @@ Ranked by evidence quality. Lead with the first item that fired:
    cannot discriminate. Its value is ordering.
 3. **`producers`** — one expensive command re-run over unchanged input purely to
    filter it differently. Rare and unambiguous when it fires.
-4. **`rereads`** — re-reads with no intervening edit. Quote
-   `repeats_after_edit` alongside: those are legitimate re-grounding, and saying so is
-   what makes the honest number credible.
+4. **`rereads`** — re-reads with no intervening edit *and* overlapping the earlier read.
+   Quote **both** exclusions alongside it: `repeats_after_edit` is legitimate
+   re-grounding, and `repeats_disjoint_slices` is different parts of one file, which
+   fetch nothing twice. Saying what was excluded is what makes the number credible — and
+   each was once counted as waste, the second in 71% of corpus repeats.
 5. **`spill`** — a result the harness judged too big to keep, read back in anyway. If
    present it is usually n=1; report it as n=1.
-6. **`cli_probes.recurring`** — command syntax re-derived here *and* in other sessions.
-   The strongest "this should be a skill" signal, already fork-deduplicated by the
-   script.
+6. **`cli_probes.recurring`** — command syntax re-derived here *and* in other sessions
+   **anywhere on this machine, not just this project**. The strongest "this should be a
+   skill" signal, already fork-deduplicated by the script, so each corroborating session
+   is a genuinely separate one. Name the family and say how many other sessions probed
+   it: the count is the argument for a skill, and a skill is installed per user, which
+   is why the comparison deliberately crosses projects. `sessions_compared` counts only
+   the sessions that could have matched, so it is not a share of all history — do not
+   report a null as "checked against N sessions" using that number.
 7. **`effort`** — the reasoning-effort setting against the work actually done.
    `overkill_turns` is trivial turns run at `xhigh`/`max`; `circling_turns` is the
    opposite and the more expensive one — a turn that went round in circles at low
    effort, where thinking harder once would have cost less than flailing twenty times.
    Suggest a setting change only when `fired` is true; a single cheap-looking turn
    proves nothing, because a short question can legitimately need deep reasoning.
+
+8. **`wasted_effort`** — the judge's open-world answer for this dimension, and the only
+   part of it that can name a pattern nobody built a check for. Items 1-7 are a closed
+   world: they find what someone thought to ask, so a novel way of wasting effort is
+   invisible to every one of them at once. These entries close that.
+
+   Report them **last within this dimension**, and treat one as evidence-grade only for
+   what its quoted ledger row actually shows. The validator has already dropped entries
+   with no quote and entries whose quote is not in the excerpt, so do not re-police them.
+
+   **Discard any entry that reports a repeat** — a file edited twice, a `Read` after an
+   `Edit`, a test re-run after a change. Those are ordinary work, items 1-7 count them
+   properly with the exclusions that make the count correct, and the judge is told not to
+   raise them. One that arrives anyway is the judge counting worse than Python did.
+
+   If `wasted_effort` was **absent** from the reply, `--verdict` says so in a warning.
+   Then this dimension has an unjudged half, and you must not present it as clean.
 
 Multiply by `batching.solo_share` when explaining cost: it is the number that converts
 each finding into round trips, and the only one that explains magnitude.
@@ -247,7 +312,7 @@ means the context is full, which is not the same as degraded.
 
 | Result | Outcome |
 |---|---|
-| everything ≤ 1, no quoted `other_findings`, nothing in dimension 3 | Nothing to fix. Say so in two lines and stop. |
+| everything ≤ 1, no quoted `other_findings` or `wasted_effort`, nothing in dimension 3 | Nothing to fix. Say so in two lines and stop. |
 | any item ≥ 2, `should_restart` ≤ 1 | **Repair prompt** — the session is worth keeping |
 | a quoted `other_finding` the user can act on | **Repair prompt**, written for that finding |
 | `should_restart` ≥ 2 | Offer `/handoff` and a fresh chat |

@@ -51,6 +51,13 @@ Its criteria live in a system prompt rather than being restated in a user messag
 run, and it reads the excerpt from a file the measurement step wrote — so the diagnosing
 session never has to hold it.
 
+**Its reply is validated, not believed.** The JSON is parsed tolerantly and then checked
+against the contract, and every quotation is matched against the excerpt the judge was
+actually shown. Requiring evidence for a non-zero score is what makes that necessary: a
+mandatory field is a field under pressure, and the cheapest way to fill it when nothing
+fills it is a plausible sentence in quotation marks. A quote that is not in the excerpt
+never reaches you as one. What is *not* checked is who said it — presence, not attribution.
+
 **Blinding is enforced by instruction, not by the sandbox.** The intent was `tools: []`,
 which would have made a judge that *cannot* go and read the unblinded original sitting
 in `~/.claude/projects/`. The harness grants *all* tools for an empty list rather than
@@ -62,13 +69,21 @@ registry where the **session under test could invoke it on itself** — a degrad
 context grading its own work is the exact failure this design exists to prevent.
 Agents are dispatched; they cannot self-invoke.
 
-It is asked six scored questions and **one open one**: *is anything else going wrong
-that those six did not ask about?* Every check in this plugin is a closed world — each
-finds only what someone thought to write a detector for, so the failure modes nobody
-anticipated are invisible to all of them at once. The judge already has the excerpt in
-front of it, so that question costs nothing, and it is the only part of the design that
-can see outside its own categories. Answers must carry a verbatim quote, and an empty
-answer is the expected one.
+It is asked six scored questions and **two open ones**. Every check in this plugin is a
+closed world — each finds only what someone thought to write a detector for, so the
+failure modes nobody anticipated are invisible to all of them at once. The two open
+questions are the only part of the design that can see outside its own categories:
+
+- *Is anything else going wrong that those six did not ask about?* — over the conversation.
+- *Looking at the tool calls, was effort spent that the request did not need?* — over a
+  ledger of what each call actually touched, which is carried inside the excerpt. Without
+  it the judge saw only *how many* calls an exchange made, never on what, so it could not
+  see an edit to a file placed off limits or a claimed change with no edit behind it.
+
+Answers must carry a verbatim quote, checked against the excerpt, and an empty answer is
+the expected one. The waste question is explicitly told **not** to report repeated calls:
+Python counts those, with the exclusions that make the count correct, and a second worse
+count of an already-measured thing is how a judge manufactures false positives.
 
 ## What it looks for, and why those things
 
@@ -83,7 +98,7 @@ detector that cannot be shown to fire on real data does not ship.**
 | **Redundant re-reads** | Re-reads with *no intervening edit*. Re-reading a file you just changed is correct re-grounding; the naive rule overstates waste by 66%. |
 | **Repeated producer** | One expensive command re-run over unchanged input purely to filter it differently — `strings <100MB binary> \| grep …`, fifteen times. |
 | **Spill re-ingest** | A result the harness judged too big to keep, read back in anyway. Seen once: 2,091 chars kept, 81,056 re-read. |
-| **CLI re-derivation** | Command syntax re-derived via `--help` here *and* in other sessions — the strongest "this should be a skill" signal. |
+| **CLI re-derivation** | Command syntax re-derived via `--help` here *and* in other sessions **anywhere on this machine** — the strongest "this should be a skill" signal, since a skill is installed per user rather than per project. Compared per-directory it measured zero on 51 real sessions; compared machine-wide, 8 of 51. |
 | **Batching ratio** | Tool calls per response. Not waste itself; the multiplier that turns every other finding into round trips. |
 | **Sycophancy** | Short user challenge → position reversal, agreement opener, or a claim quietly hedged into a non-claim. Located deterministically, judged by the model. |
 | **Grounding decay** | Checking reality less as context fills. Reported only against the session's own first quartile, and flagged as weak — because it is. |
@@ -114,7 +129,9 @@ from .checks import register
 
 @register("my_check", "opportunity", evidence="evidenced",
           question="Did the session do X when it could have done Y?")
-def _my_check(ctx):                       # ctx.session, ctx.others (fork-deduplicated)
+def _my_check(ctx):                       # ctx.session; ctx.others = other sessions on
+                                          # this machine, fork-deduplicated, pre-filtered
+                                          # to those containing `--help` (see ROADMAP)
     hits = [c for c in ctx.session.calls if ...]
     return {"fired": bool(hits), "hits": hits,
             "line": f"my_check   {len(hits)} occurrences"}
@@ -174,13 +191,20 @@ checkout without installing, use `PYTHONPATH=. python3 -m checkchat` instead.
 ## Tests
 
 ```bash
-pytest tests/
+python3 -m venv .venv && .venv/bin/pip install -e '.[dev]'
+.venv/bin/pytest
 ```
 
-They cover the four wire-format traps that silently corrupt every count if mishandled
+No runtime dependencies — `pytest` is the only dev extra, and `dependencies` in
+`pyproject.toml` is empty on purpose: this has to run inside whatever environment the
+session under test already has.
+
+They cover the five wire-format traps that silently corrupt every count if mishandled
 (one response spanning several records; tool results wearing a `user` role; subagent
-sidechains; a user-declined call flagged as an error), plus a positive control for
-sycophancy.
+sidechains; a user-declined call flagged as an error; an interruption marker becoming a
+turn nobody typed), plus a positive control for sycophancy — which the development
+corpus measures at zero, so a detector never observed to fire would be
+indistinguishable from a broken one.
 
 ## License
 

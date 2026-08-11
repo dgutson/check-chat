@@ -21,7 +21,7 @@ import sys
 import time
 from pathlib import Path
 
-from . import checks, digest, discover, inventory, transcript, verdict
+from . import checks, detect, digest, discover, inventory, transcript, verdict
 
 
 def collect(cwd: str, session_id: str | None = None, siblings: int = 12) -> dict:
@@ -38,7 +38,15 @@ def collect(cwd: str, session_id: str | None = None, siblings: int = 12) -> dict
     if not sess.steps:
         return {"error": "transcript parsed but contains no assistant responses", "path": str(path)}
 
-    others = discover.siblings(cwd, exclude=path, limit=siblings) if siblings else []
+    # Machine-wide, not this directory: the one cross-session check asks whether syntax was
+    # re-derived *before*, and its payoff is a skill, which is per user rather than per
+    # folder. `contains` spends the scan budget only on transcripts that could match —
+    # `detect.PROBE_NEEDLE` is that check's needle, and the coupling is deliberate and
+    # documented in `discover.siblings`, which says what to do when a second one appears.
+    others = discover.siblings(
+        cwd, exclude=path, limit=siblings, contains=detect.PROBE_NEEDLE,
+        exclude_forks_of=sess,
+    ) if siblings else []
     results = checks.run(checks.Context(session=sess, others=others))
 
     out = {
@@ -57,17 +65,26 @@ def _text(d: dict) -> str:
     if "error" in d:
         return f"error: {d['error']}"
     s = d["session"]
+    partial = "  [PARTIAL]" if s.get("truncated") else ""
     lines = [
         f"session {(s.get('id') or '?')[:8]} | turns {s['turns']} responses {s['responses']} "
-        f"calls {s['calls']} | depth {s['depth_tokens']:,} tok | {s['analysis_ms']}ms",
+        f"calls {s['calls']} | depth {s['depth_tokens']:,} tok | {s['analysis_ms']}ms{partial}",
     ]
+
+    # A `caveat` check qualifies every number below it, so it goes above them. Selected
+    # by evidence level rather than by name, so the next one of its kind needs no edit.
+    hoisted = [n for n, r in d["checks"].items()
+               if r.get("evidence") == "caveat" and r.get("fired") and r.get("line")]
+    for name in hoisted:
+        lines.append(f"! {d['checks'][name]['line']}")
+
     # Dimensions come from the registry, never a literal list here: a hardcoded one
     # silently drops any check registered under a dimension nobody remembered to add.
     order = {"opportunity": 0, "specification": 1, "rot": 2, "sycophancy": 3, "context": 4}
     seen = dict.fromkeys(r.get("dimension", "") for r in d["checks"].values())
     for dim in sorted(seen, key=lambda x: (order.get(x, 99), x)):
         for name, r in d["checks"].items():
-            if r.get("dimension") == dim and r.get("line"):
+            if r.get("dimension") == dim and r.get("line") and name not in hoisted:
                 mark = "*" if r.get("fired") else " "
                 lines.append(f"{mark} {r['line']}")
     fired = d.get("fired") or []
@@ -75,18 +92,42 @@ def _text(d: dict) -> str:
     return "\n".join(lines)
 
 
+def _evidence(path: str) -> tuple[str | None, str]:
+    """What the judge was shown, for checking its quotations against.
+
+    Both `--emit` files count: the judge is told to read the digest *and* the candidates,
+    so a quote from either is faithful. An unreadable path returns a reason rather than
+    raising — a broken `--against` must not cost a usable verdict, only its verification.
+    """
+    p = Path(path)
+    if p.is_dir():
+        parts = [(p / n).read_text(errors="replace")
+                 for n in ("digest.txt", "candidates.txt") if (p / n).is_file()]
+        if not parts:
+            return None, f"no digest.txt or candidates.txt in {p}"
+        return "\n".join(parts), ""
+    if p.is_file():
+        return p.read_text(errors="replace"), ""
+    return None, f"--against path does not exist: {p}"
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="checkchat", description=__doc__)
     ap.add_argument("--cwd", default=os.getcwd(), help="directory the session runs in")
     ap.add_argument("--session", default=None, help="session id, if the newest is not the one")
     ap.add_argument("--siblings", type=int, default=12,
-                    help="other sessions to scan for recurring work (0 disables)")
+                    help="how many other sessions on this machine to scan for recurring "
+                         "work, newest first, counting only those that could match "
+                         "(0 disables). Recall of cross-session findings scales with it")
     ap.add_argument("--text", action="store_true", help="human-readable summary instead of JSON")
     ap.add_argument("--digest-only", action="store_true", help="print just the blinded excerpt")
     ap.add_argument("--catalog", action="store_true", help="list registered checks and exit")
     ap.add_argument("--verdict", metavar="PATH", nargs="?", const="-", default=None,
                     help="validate the judge's reply (PATH, or '-' for stdin) and exit "
                          "0 ok / 1 salvaged / 2 unusable")
+    ap.add_argument("--against", metavar="PATH", default=None,
+                    help="with --verdict, the evidence the judge was given (the --emit DIR, "
+                         "or one file) — its quotations are checked against it")
     ap.add_argument("--json", action="store_true",
                     help="with --verdict, emit the normalised verdict as JSON")
     ap.add_argument("--emit", metavar="DIR", default=None,
@@ -101,7 +142,10 @@ def main(argv: list[str] | None = None) -> int:
 
     if a.verdict is not None:
         raw = sys.stdin.read() if a.verdict == "-" else Path(a.verdict).read_text(errors="replace")
-        v = verdict.check(raw)
+        excerpt, why = _evidence(a.against) if a.against else (None, "")
+        v = verdict.check(raw, excerpt)
+        if why:
+            v.warnings.insert(0, f"quotes were NOT checked — {why}")
         print(json.dumps(v.as_dict(), indent=1) if a.json else verdict.render(v))
         return v.status
 

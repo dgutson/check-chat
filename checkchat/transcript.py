@@ -2,7 +2,7 @@
 
 Self-contained on purpose — check-chat is meant to be installable on its own.
 
-Four things about the wire format are easy to get wrong, and each of them silently
+Five things about the wire format are easy to get wrong, and each of them silently
 corrupts every count downstream:
 
 1. One API response is written as SEVERAL records, one per content block, sharing a
@@ -12,6 +12,14 @@ corrupts every count downstream:
 3. Subagent traffic (`isSidechain`) lives in the same file but is a separate context.
 4. A tool call the human *declined* is flagged `is_error`. It is a decision about the
    work, not a failure, and counting it punishes people who review what the agent does.
+5. An interruption is written as a `user` record reading
+   `[Request interrupted by user for tool use]`. Kept, it becomes a **turn nobody
+   typed** — 15 of them across 9 sessions in the development corpus — and the damage
+   is not the inflated count. The phantom sits between the reply and the objection that
+   followed it, so `sycophancy` sees a short "interjection" with no reply after it,
+   discards that, and then finds the *real* objection preceded by an empty reply and
+   rejects it too. Interrupting and then pushing back is the highest-signal sycophancy
+   moment there is, and this returned a confident zero for it.
 """
 
 from __future__ import annotations
@@ -25,7 +33,10 @@ from pathlib import Path
 _STRIP = re.compile(
     r"<system-reminder>.*?</system-reminder>"
     r"|<local-command-std(?:out|err)>.*?</local-command-std(?:out|err)>"
-    r"|<(command-\w+)>.*?</\1>",
+    r"|<(command-\w+)>.*?</\1>"
+    # The harness writes this as a user record of its own. Left in, it becomes a turn
+    # nobody typed — see trap 5 above.
+    r"|\[Request interrupted by user[^\]]*\]",
     re.S,
 )
 
@@ -90,8 +101,8 @@ class Session:
     steps: list[Step] = field(default_factory=list)
     turns: list[Turn] = field(default_factory=list)
     calls: list[Call] = field(default_factory=list)
-    compactions: int = 0
     truncated: bool = False
+    dropped_bytes: int = 0       # bytes ahead of the read window, when truncated
     model: str | None = None
 
     @property
@@ -156,7 +167,8 @@ def load(path: str | Path, max_bytes: int = 24 * 1024 * 1024) -> Session:
         with p.open("rb") as fh:
             if sess.truncated:
                 fh.seek(size - max_bytes)
-                fh.readline()
+                fh.readline()               # discard the record we landed in the middle of
+                sess.dropped_bytes = fh.tell()
             raw = fh.read()
     except Exception:
         return sess
@@ -192,8 +204,13 @@ def load(path: str | Path, max_bytes: int = 24 * 1024 * 1024) -> Session:
                 + int(usage.get("cache_creation_input_tokens") or 0)
                 + int(usage.get("cache_read_input_tokens") or 0)
             )
-            if not merging and prev_depth > 40_000 and depth and depth < prev_depth * 0.6:
-                sess.compactions += 1
+            # There was a compaction detector here: a large drop in context depth was
+            # read as the harness having replaced the history with a summary. It was
+            # removed after being measured. Across 232 transcripts, depth above the 40k
+            # floor rose monotonically in **4,155 of 4,155** consecutive measurements —
+            # not one fall of any magnitude — and no compaction marker exists anywhere
+            # in the wire format to check a replacement against. See the roadmap: it is
+            # blocked on a compacted transcript, not on a better threshold.
             if depth:
                 prev_depth = depth
 

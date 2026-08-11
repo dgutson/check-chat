@@ -14,16 +14,22 @@ So a check declares its own metadata and the rest follows from it:
   so a new check inherits the right reporting discipline without the skill being
   edited at all.
 
-`evidence` values, strongest first:
+`evidence` values, strongest first — except `caveat`, which sits outside the ordering
+because it is not a finding about the session at all, but a fact about the report:
 
 | value | meaning | how the skill must report it |
 |---|---|---|
+| `caveat` | qualifies every other number here | say it **first**, before the dimensions |
 | `proof` | carries its own ground truth | lead with it |
 | `evidenced` | rare, unambiguous when it fires | report with the quoted specifics |
 | `ranked` | too common to discriminate | ranked table, never a verdict |
 | `descriptive` | a true statistic with no outcome label | state it, draw no conclusion |
 | `weak` | measured near a null | hedge explicitly, never threshold |
 | `raw` | a count only | never score it |
+
+`caveat` earns a tier of its own rather than a mention in the skill's prose for the
+same reason the others do: the next check that qualifies the report instead of adding
+to it should inherit that voice without this file's consumers being edited again.
 
 A check returns a dict carrying at least `fired` and `line`. If it raises, it is
 caught and recorded: one broken check must never take down the diagnostic.
@@ -118,7 +124,8 @@ def _rereads(ctx):
     r = detect.rereads(ctx.session)
     return {**r, "fired": r["fires"],       # detector says `fires`; the registry reads `fired`
             "line": f"rereads    {r['repeats_without_change']} unchanged "
-                    f"(+{r['repeats_after_edit']} legit re-grounding) = {r['chars']:,} chars"}
+                    f"(+{r['repeats_after_edit']} legit re-grounding, "
+                    f"+{r['repeats_disjoint_slices']} different slices) = {r['chars']:,} chars"}
 
 
 @register("spill", "opportunity", evidence="evidenced",
@@ -129,12 +136,15 @@ def _spill(ctx):
 
 
 @register("cli_probes", "opportunity", evidence="descriptive",
-          question="Was command syntax re-derived here and in other sessions?")
+          question="Was command syntax re-derived here and in other sessions on this machine?")
 def _cli(ctx):
     c = detect.cli_probes(ctx.session, ctx.others)
+    # "other probing sessions", not "other sessions": `ctx.others` is pre-filtered to the
+    # transcripts that could match, so reporting it as a share of all sessions would
+    # overstate how much history a null result has actually been checked against.
     return {"fired": bool(c["recurring"]), **c,
             "line": f"cli        {c['probes']} --help probes, {len(c['recurring'])} recurring "
-                    f"across {c['sessions_compared']} sessions"}
+                    f"across {c['sessions_compared']} other probing sessions machine-wide"}
 
 
 @register("effort", "opportunity", evidence="descriptive",
@@ -184,6 +194,13 @@ def _specification(ctx):
                          f"({a.get('vague_requests', 0)}/{a.get('requests', 0)} named nothing "
                          f"specific; first edit after "
                          f"{r2e if r2e is not None else 'n/a — no edits'})"}
+
+
+@register("continuity", "context", evidence="caveat",
+          question="Was the whole transcript read, or are the counts computed on a fragment?")
+def _continuity(ctx):
+    c = detect.continuity(ctx.session)
+    return {**c, "line": f"continuity {c['summary']}"}
 
 
 @register("failures", "context", evidence="raw",

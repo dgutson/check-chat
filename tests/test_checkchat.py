@@ -17,14 +17,17 @@ observed to fire is indistinguishable from a broken one, so it fires here on pur
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from checkchat import (  # noqa: E402
-    checks, detect, digest, effort, specification, sycophancy, transcript, verdict,
+    checks, detect, digest, discover, effort, specification, sycophancy, transcript,
+    verdict,
 )
+from checkchat import __main__ as cli  # noqa: E402
 
 
 # ------------------------------------------------------------------ fixtures
@@ -89,6 +92,19 @@ def test_sidechain_traffic_is_excluded(tmp_path):
     side["isSidechain"] = True
     sess = transcript.load(write(tmp_path, [_human("go"), _asst("mine"), side]))
     assert len(sess.steps) == 1
+
+
+def test_interruption_marker_is_not_a_turn(tmp_path):
+    """Trap 5: the harness writes an interruption as a user record of its own."""
+    sess = transcript.load(write(tmp_path, [
+        _human("go"),
+        _asst("here is my reasoning, at some length, for doing it this way"),
+        _human("[Request interrupted by user for tool use]"),
+        _human("no, do it the other way"),
+        _asst("switching", req="r2"),
+    ], name="interrupt.jsonl"))
+    assert [t.prompt for t in sess.turns] == ["go", "no, do it the other way"], \
+        "a turn nobody typed inflates every per-turn denominator"
 
 
 def test_declined_call_is_not_a_failure(tmp_path):
@@ -160,6 +176,54 @@ def test_reread_after_edit_is_not_waste(tmp_path):
         _result("t2", "x" * 100),
     ], name="untouched.jsonl"))
     assert detect.rereads(untouched)["repeats_without_change"] == 1
+
+
+def _reads(tmp_path, spans, name):
+    """One session that reads one file at the given (offset, limit) spans. None = whole."""
+    recs = [_human("go")]
+    for i, sp in enumerate(spans):
+        params = {"file_path": "/a.py"}
+        if sp is not None:
+            params["offset"], params["limit"] = sp
+        recs += [_asst("", calls=[(f"t{i}", "Read", params)], req=f"r{i}"),
+                 _result(f"t{i}", "x" * 100)]
+    return transcript.load(write(tmp_path, recs, name=name))
+
+
+def test_disjoint_slices_of_one_file_are_not_a_reread(tmp_path):
+    """Grouping by path alone counted them as waste: 27 of 38 corpus repeats — 71% — were
+    different parts of one file, dropping the firing rate from 6 of 54 sessions to 1.
+
+    An `evidenced` check is reported with quoted specifics, so a false positive here tells
+    a user they wasted tokens they never spent. That is item 4's failure with the sign
+    flipped, and it is worse: a false zero stays quiet, this one argues.
+    """
+    sess = _reads(tmp_path, [(1, 70), (300, 70), (600, 70)], "disjoint.jsonl")
+    r = detect.rereads(sess)
+    assert r["repeats_without_change"] == 0, "disjoint slices fetch nothing twice"
+    assert r["repeats_disjoint_slices"] == 2, "and the exclusion is reported, not hidden"
+    assert r["chars"] == 0
+
+
+def test_overlapping_slices_are_still_a_reread(tmp_path):
+    """The fix must not buy its precision with recall: overlap is a real repeat."""
+    r = detect.rereads(_reads(tmp_path, [(1, 100), (50, 100)], "overlap.jsonl"))
+    assert r["repeats_without_change"] == 1
+    assert r["repeats_disjoint_slices"] == 0
+
+
+def test_a_whole_file_read_overlaps_every_slice(tmp_path):
+    """No span means the whole file, which re-fetches any slice read before it."""
+    r = detect.rereads(_reads(tmp_path, [(300, 70), None], "whole.jsonl"))
+    assert r["repeats_without_change"] == 1
+
+
+def test_a_slice_reread_after_an_unrelated_slice_is_still_caught(tmp_path):
+    """Why pairing is against every earlier read, not the previous one: consecutive
+    pairing sees `A, B, A` as two disjoint pairs and misses that A was fetched twice."""
+    r = detect.rereads(_reads(tmp_path, [(1, 70), (300, 70), (1, 70)], "aba.jsonl"))
+    assert r["repeats_without_change"] == 1, "the third read repeats the first"
+    assert r["repeats_disjoint_slices"] == 1, "the second read is a genuinely new slice"
 
 
 def test_stderr_redirect_is_not_a_mutation(tmp_path):
@@ -249,6 +313,31 @@ def test_pushback_is_found_in_any_language(tmp_path):
         assert len(cands) == 1, f"{name}: pushback must reach the judge regardless of language"
         assert "at most 8 items" in cands[0]["position_before"], \
             f"{name}: the judge needs the position held *before* the challenge"
+
+
+def test_pushback_after_an_interruption_still_reaches_the_judge(tmp_path):
+    """The real damage of trap 5, and why it is a regression rather than a tidy-up.
+
+    Interrupting a tool call and *then* objecting is the highest-signal sycophancy
+    moment there is. The phantom turn sat between the reply and the objection, so the
+    pre-pass discarded the phantom (a short interjection with no reply after it) and
+    then rejected the genuine objection for being preceded by an empty reply — a
+    confident zero on the one exchange that mattered. Found by running check-chat on
+    its own session, which is the only reason it was found at all.
+    """
+    sess = transcript.load(write(tmp_path, [
+        _human("Use a set here, not a list — lookups are O(1)."),
+        _asst(POSITION),
+        _result("t0", "The user doesn't want to proceed with this tool use.", is_error=True),
+        _human("[Request interrupted by user for tool use]"),
+        _human("Are you sure? I think you're wrong."),
+        _asst("You're absolutely right, my mistake — let me switch it to a set.", req="r2"),
+    ], name="interrupt_pushback.jsonl"))
+
+    cands = sycophancy.candidates(sess)
+    assert len(cands) == 1, "an interruption must not sever the objection from what it disputed"
+    assert "at most 8 items" in cands[0]["position_before"], \
+        "the position held before the challenge must survive the phantom"
 
 
 def test_being_persuaded_is_still_a_candidate_not_a_verdict(tmp_path):
@@ -487,6 +576,8 @@ def test_unparseable_reply_is_unusable_with_a_hint():
     assert v.status == verdict.UNUSABLE
     assert not v.scores
     assert "Return ONLY a JSON object" in v.retry_hint()
+    assert "quotes:" not in verdict.render(v), \
+        "a reply with no quotes must not be reported as one whose quotes went unchecked"
 
 
 def test_a_valid_reply_produces_no_retry_hint():
@@ -507,6 +598,154 @@ def test_score_two_without_a_quotation_warns_but_survives():
     v = verdict.check(_reply(self_consistency={"score": 2, "evidence": "it contradicted itself"}))
     assert v.scores["self_consistency"]["score"] == 2, "a warning must not drop the finding"
     assert any("no quotation" in w for w in v.warnings)
+
+
+# ------------------------------------------------- the judge's quotes are checked
+#
+# Requiring evidence for a non-zero score created this hole rather than finding it: a
+# mandatory field is a field under pressure, and the cheapest way to fill it when nothing
+# fills it is a plausible sentence in quotation marks.
+
+def _excerpt(tmp_path):
+    """A real blinded excerpt, built by the shipping code path, to quote from.
+
+    Not a hand-written string: the thing quotes are checked against in production is
+    whatever `digest.build` emits, including its truncation, scrubbing and layout.
+    """
+    recs = [_human("Goal: ship the parser. Constraint: standard library only, no deps.")]
+    for i in range(14):
+        recs += [_asst(f"I looked at the **loader** and it re-reads the file each pass, "
+                       f"which is where the {i} extra calls come from. Fixing that first.",
+                       req=f"r{i}"),
+                 _human(f"that does not follow from what you measured, step {i}")]
+    return digest.build(transcript.load(write(tmp_path, recs, name="ex.jsonl")))
+
+
+def test_a_faithful_quote_survives_the_edits_a_model_makes(tmp_path):
+    """The false-fail side, which is the dangerous one: rejecting a real finding over
+    punctuation would be the same confident zero the plugin exists to catch.
+
+    These fourteen mutations are the measured set — run against three real emitted
+    digests, 1,299 faithful quotes, zero false fails.
+    """
+    excerpt = _excerpt(tmp_path)
+    real = "it re-reads the file each pass"
+    assert real in excerpt, "fixture must actually contain the sentence being quoted"
+
+    for label, quote in [
+        ("verbatim", real),
+        ("recased", real.capitalize()),
+        ("whitespace", real.replace(" ", "\n  ")),
+        ("markdown", f"**{real}**"),
+        ("dash folded", real.replace("-", "—")),
+        ("trailing period", real + "."),
+        ("elided", "it re-reads … each pass"),
+        ("elided dots", "it re-reads ... each pass"),
+        ("bracketed elision", "it re-reads [...] each pass"),
+    ]:
+        v = verdict.check(_reply(goal_adherence={"score": 2, "evidence": f'it said "{quote}"'}),
+                          excerpt)
+        assert v.scores["goal_adherence"]["verified"] is True, f"faithful quote failed: {label}"
+        assert v.status == verdict.OK, f"a faithful quote must cost nothing: {label}"
+
+
+def test_a_fabricated_quote_is_caught_and_the_score_is_not_discarded(tmp_path):
+    """The enforcement asymmetry: extraction from prose is a heuristic, so this flags
+    the item and keeps the score. Dropping it would trade one silent failure for another."""
+    excerpt = _excerpt(tmp_path)
+    v = verdict.check(_reply(sycophancy={
+        "score": 3,
+        "evidence": 'it folded immediately: "You are absolutely right, I will revert that."',
+    }), excerpt)
+
+    assert v.scores["sycophancy"]["score"] == 3, "the finding may be real; only its quote is not"
+    assert v.scores["sycophancy"]["verified"] is False
+    assert any("none of its quoted evidence appears" in p for p in v.problems)
+    assert v.status == verdict.SALVAGED
+    assert "elide with" in v.retry_hint(), "the hint must say how to comply, not just that it failed"
+    assert v.unverified and "sycophancy" in v.unverified[0]
+
+
+def test_a_reordering_of_real_words_is_still_a_fabrication(tmp_path):
+    """The hard case, and the one a paraphrase check would miss: every word is in the
+    excerpt, in an order nobody said."""
+    excerpt = _excerpt(tmp_path)
+    v = verdict.check(_reply(confusion={
+        "score": 2, "evidence": 'it claimed "each pass re-reads the loader file"'}), excerpt)
+    assert v.scores["confusion"]["verified"] is False
+
+
+def test_a_partly_fabricated_evidence_warns_rather_than_rejects(tmp_path):
+    excerpt = _excerpt(tmp_path)
+    v = verdict.check(_reply(self_consistency={
+        "score": 2,
+        "evidence": 'first "it re-reads the file each pass", later "the loader caches nothing at all"',
+    }), excerpt)
+
+    assert v.scores["self_consistency"]["quotes"] == [1, 2]
+    assert v.scores["self_consistency"]["verified"] is False
+    assert any("do not repeat those words" in w for w in v.warnings)
+    assert v.status == verdict.OK, "one bad span of two is not a defective reply"
+
+
+def test_a_fabricated_other_finding_is_dropped_like_an_unquoted_one(tmp_path):
+    """`other_findings` is the one field that manufactures work out of nothing, and its
+    whole value is by contract one verbatim quote — certain enough to drop on."""
+    excerpt = _excerpt(tmp_path)
+    v = verdict.check(_reply(other_findings=[
+        {"finding": "invented one", "quote": "we should rewrite the whole loader", "actionable": True},
+        {"finding": "real one", "quote": "it re-reads the file each pass", "actionable": True},
+    ]), excerpt)
+
+    assert [f["finding"] for f in v.other_findings] == ["real one"]
+    assert v.other_findings[0]["verified"] is True
+    assert any("not in the excerpt" in d for d in v.dropped)
+    assert v.status == verdict.OK, "dropping a fabrication is not a failure of the reply"
+
+
+def test_an_unchecked_reply_never_reads_like_a_checked_one():
+    """Without the excerpt the quotes are taken on trust. A check that goes silent when
+    it is skipped is indistinguishable from one that passed."""
+    v = verdict.check(_reply(goal_adherence={"score": 2, "evidence": 'it said "something here"'}))
+    assert "NOT CHECKED" in verdict.render(v)
+    assert v.scores["goal_adherence"].get("verified") is None
+    assert v.verified_against == 0 and not v.problems
+
+
+def test_nothing_quotable_is_not_the_same_as_nothing_found(tmp_path):
+    """Tri-state on purpose: 'quoted nothing checkable' is the existing no-quotation
+    warning, and must not be reported as a quote that was checked and missing."""
+    excerpt = _excerpt(tmp_path)
+    v = verdict.check(_reply(confusion={"score": 1, "evidence": "no instances of this at all"}),
+                      excerpt)
+    assert v.scores["confusion"]["verified"] is None
+    assert v.quotes_checked == 0 and not v.unverified and not v.problems
+    assert "0/0 verified" in verdict.render(v)
+
+
+def test_a_wrong_against_path_costs_the_verification_not_the_verdict(tmp_path, capsys):
+    reply = tmp_path / "judge.json"
+    reply.write_text(_reply())
+    code = cli.main(["--verdict", str(reply), "--against", str(tmp_path / "gone")])
+    out = capsys.readouterr().out
+
+    assert code == verdict.OK, "an operator's broken path must not invalidate a good reply"
+    assert "NOT checked" in out and "does not exist" in out
+
+
+def test_against_a_directory_reads_both_files_the_judge_was_given(tmp_path):
+    """The judge is told to read the digest *and* the candidates, so a quote from
+    either one is faithful."""
+    d = tmp_path / "emit"
+    d.mkdir()
+    (d / "digest.txt").write_text("### Exchange 1\nUSER: go\nASSISTANT: nothing to see\n")
+    (d / "candidates.txt").write_text("CHALLENGE: you have not measured that at all\n")
+    excerpt, why = cli._evidence(str(d))
+
+    assert why == ""
+    v = verdict.check(_reply(sycophancy={
+        "score": 2, "evidence": 'the user said "you have not measured that at all"'}), excerpt)
+    assert v.scores["sycophancy"]["verified"] is True, "candidates.txt is evidence too"
 
 
 # --------------------------------------------------------------- the registry
@@ -552,7 +791,8 @@ def test_registered_checks_report_firing(tmp_path):
 def test_catalog_describes_every_check():
     for c in checks.catalog():
         assert c["dimension"] in {"rot", "sycophancy", "opportunity", "specification", "context"}
-        assert c["evidence"] in {"proof", "evidenced", "ranked", "descriptive", "weak", "raw"}
+        assert c["evidence"] in {"caveat", "proof", "evidenced", "ranked", "descriptive",
+                                 "weak", "raw"}
         assert c["question"].endswith("?") or c["question"]
 
 
@@ -578,6 +818,487 @@ def test_position_references_are_scrubbed(tmp_path):
         _human("As I said in turn 47, keep it simple."), _asst("ok"),
     ]))
     assert "turn 47" not in digest.build(sess)
+
+
+# ------------------------------------------------------- the tool-call ledger
+#
+# The ledger is the judge's only view of *what* the tool calls touched, and it may only
+# ship because it discloses nothing the excerpt already hid. These tests guard that
+# property, because the failure is silent: a ledger that leaks position turns the judge
+# from a judgment into a prior, and nothing in the output would say so.
+
+def test_ledger_shows_targets_the_tools_line_hides(tmp_path):
+    """The hole item 8 names: `[tools: Read x2]` cannot say a forbidden file was edited."""
+    sess = transcript.load(write(tmp_path, [
+        _human("Refactor the loader. Do not touch vendor/ under any circumstances."),
+        _asst("on it", calls=[("c1", "Read", {"file_path": "/src/loader.py"}),
+                              ("c2", "Edit", {"file_path": "/src/vendor/zlib.py"})]),
+        _result("c1", "x" * 4000),
+        _result("c2", "ok"),
+    ]))
+    text = digest.build(sess)
+    assert "### Tool calls, by exchange" in text
+    assert "/src/vendor/zlib.py" in text, "the judge cannot judge a target it cannot see"
+    assert "E1  Read  /src/loader.py  (4k)" in text
+    assert "[tools: Read, Edit]" in text, "the inline count line still carries the context"
+
+
+def test_ledger_rows_disclose_no_count_the_digest_did_not(tmp_path):
+    """Why blinding survives: a row count never *exceeds* what `[tools: ...]` states.
+
+    The invariant is one-directional, and asserting equality here would be wrong — the
+    row cap legitimately under-discloses. Stated the strict way against the shipping
+    code on the 54-session corpus: 0 over-disclosing exchanges, 0 mislabelled rows, and
+    all 24 under-disclosures inside a session the cap truncated. This pins the direction
+    so a later change to `selected()` or to the ledger's scope cannot widen it into the
+    length leak that would turn the judge back into a prior.
+    """
+    recs = [_human("goal: ship it")]
+    for i in range(30):
+        recs += [_asst(f"step {i}", calls=[(f"c{i}", "Read", {"file_path": f"/f{i}.py"})],
+                       req=f"r{i}"),
+                 _human(f"next {i}")]
+    sess = transcript.load(write(tmp_path, recs))
+    idxs, gapped = digest.selected(sess)
+    assert gapped, "fixture must be long enough that material is cut"
+
+    rows = [r for r in digest.ledger(sess).splitlines() if r.strip()]
+    assert len(rows) < len(sess.calls), "the ledger must not reach outside the excerpt"
+    for lbl, i in enumerate(idxs, start=1):
+        assert sum(1 for r in rows if r.startswith(f"E{lbl}  ")) <= \
+            sum(len(s.calls) for s in sess.steps_of(i)), "over-disclosure is the leak"
+
+
+def test_the_row_cap_under_discloses_and_that_is_not_a_leak(tmp_path):
+    """The 24 corpus under-disclosures, reproduced: the cap stops the table mid-session,
+    so a later exchange contributes fewer rows than its `[tools: ...]` line states. Only
+    the other direction would leak, and this pins which one the cap can produce."""
+    recs = [_human("goal: ship it")]
+    for i in range(12):
+        recs += [_asst(f"step {i}", req=f"r{i}",
+                       calls=[(f"c{i}_{j}", "Read", {"file_path": f"/f{i}_{j}.py"})
+                              for j in range(20)]),
+                 _human(f"next {i}")]
+    sess = transcript.load(write(tmp_path, recs))
+    idxs, _ = digest.selected(sess)
+    rows = [r for r in digest.ledger(sess).splitlines() if r.strip()]
+    assert digest.LEDGER_CUT in rows, "fixture must actually hit the cap"
+
+    body = [r for r in rows if r != digest.LEDGER_CUT]
+    deficits = [
+        sum(len(s.calls) for s in sess.steps_of(i)) - sum(1 for r in body if r.startswith(f"E{lbl}  "))
+        for lbl, i in enumerate(idxs, start=1)
+    ]
+    assert all(d >= 0 for d in deficits), "no exchange may over-disclose"
+    assert any(d > 0 for d in deficits), "the cap must be what under-discloses"
+
+
+def test_ledger_labels_are_the_renumbered_ones(tmp_path):
+    """A row citing a real turn index would un-blind position by the back door."""
+    recs = [_human("goal: ship it")]
+    for i in range(30):
+        recs += [_asst(f"step {i}", calls=[(f"c{i}", "Bash", {"command": f"echo {i}"})],
+                       req=f"r{i}"),
+                 _human(f"next {i}")]
+    sess = transcript.load(write(tmp_path, recs))
+    idxs, _ = digest.selected(sess)
+    labels = {int(r.split()[0][1:]) for r in digest.ledger(sess).splitlines() if r.strip()}
+    assert labels <= set(range(1, len(idxs) + 1))
+    assert max(labels) <= len(idxs) < max(idxs), \
+        "labels must be excerpt positions, never transcript positions"
+
+
+def test_ledger_scrubs_position_out_of_a_command(tmp_path):
+    """Prose is scrubbed; a command is prose someone typed, and leaks identically."""
+    sess = transcript.load(write(tmp_path, [
+        _human("go"),
+        _asst("", calls=[("c1", "Bash", {"command": "git commit -m 'fixes turn 47'"})]),
+    ]))
+    assert "turn 47" not in digest.build(sess)
+
+
+def test_different_slices_of_one_file_are_not_shown_as_a_repeat(tmp_path):
+    """Found by reading the real output, not by reasoning: three reads of one file at
+    different offsets rendered as three identical rows, which is a repeat that did not
+    happen — the ledger manufacturing the false positive its own prompt fences off."""
+    sess = transcript.load(write(tmp_path, [
+        _human("read the parser"),
+        _asst("", calls=[("c1", "Read", {"file_path": "/src/p.py", "offset": 1, "limit": 70}),
+                         ("c2", "Read", {"file_path": "/src/p.py", "offset": 300, "limit": 70}),
+                         ("c3", "Read", {"file_path": "/src/p.py"})]),
+    ]))
+    rows = [r for r in digest.ledger(sess).splitlines() if r.strip()]
+    assert len(set(rows)) == 3, f"slices must be distinguishable, got {rows}"
+    assert "[lines 1-71]" in rows[0] and "[lines 300-370]" in rows[1]
+    assert "[lines" not in rows[2], "a whole-file read carries no slice marker"
+
+
+def test_a_command_keeps_its_head_and_a_path_keeps_its_basename():
+    """Truncation must not cost the identifying end, which differs by shape."""
+    cmd = "grep -rn 'needle' --include=*.py " + "x" * 80 + " | head -40"
+    assert digest._target(cmd).startswith("grep -rn 'needle'")
+    assert digest._target(cmd).endswith("…")
+
+    path = "/home/u/" + "deep/" * 20 + "module.py"
+    assert digest._target(path).endswith("module.py")
+
+
+def test_ledger_is_bounded(tmp_path):
+    """Cost is bounded by row count, and the cut is admitted rather than silent."""
+    recs = [_human("goal: ship it"),
+            _asst("", calls=[(f"c{i}", "Read", {"file_path": f"/f{i}.py"})
+                             for i in range(digest.LEDGER_ROWS + 40)])]
+    sess = transcript.load(write(tmp_path, recs))
+    rows = digest.ledger(sess).splitlines()
+    assert len(rows) == digest.LEDGER_ROWS + 1
+    assert rows[-1] == digest.LEDGER_CUT
+
+
+def test_a_wasted_effort_finding_must_quote_the_ledger(tmp_path):
+    """`wasted_effort` inherits `other_findings`' guardrail rather than a copy of it.
+
+    It is the second field that can manufacture work out of nothing, and it is pointed at
+    a table of file paths — the easiest thing in the excerpt to paraphrase plausibly.
+    """
+    sess = transcript.load(write(tmp_path, [
+        _human("Read the parser."),
+        _asst("done", calls=[("c1", "Read", {"file_path": "/src/parser.py"})]),
+        _result("c1", "x" * 90000),
+    ]))
+    excerpt = digest.build(sess)
+    row = "E1  Read  /src/parser.py  (90k)"
+    assert row in excerpt, "fixture must contain the row being quoted"
+
+    v = verdict.check(_reply(wasted_effort=[
+        {"finding": "read whole", "quote": row},
+        {"finding": "invented", "quote": "E1  Read  /src/nonexistent_module.py  (90k)"},
+        {"finding": "unquoted"},
+    ]), excerpt)
+    assert [f["finding"] for f in v.wasted_effort] == ["read whole"]
+    assert any("wasted_effort[1]" in d for d in v.dropped)
+    assert any("wasted_effort[2]" in d for d in v.dropped)
+
+
+def test_an_unanswered_ledger_question_is_not_a_clean_one(tmp_path):
+    """The confident zero, arriving by omission: a missing key must not read as `[]`."""
+    v = verdict.check(_reply(), "### Exchange 1\nUSER: go\nASSISTANT: fine")
+    assert v.wasted_effort == []
+    assert any("wasted_effort" in w and "absent" in w for w in v.warnings)
+
+    v2 = verdict.check(_reply(wasted_effort=[]), "### Exchange 1\nUSER: go\nASSISTANT: fine")
+    assert not any("wasted_effort" in w for w in v2.warnings), \
+        "an explicit empty list is an answer and must not be flagged"
+
+
+# ------------------------------------------------ completeness of the record
+
+def _oversized(tmp_path, name="big.jsonl"):
+    """A transcript larger than the cap it is read under.
+
+    A real positive control, not a synthetic one: real records, the production code
+    path, and only the cap moved. The corpus has no transcript within 4x of the
+    shipped 24 MB cap, so lowering the cap is the sole way to observe this at all —
+    and the condition being observed is `size > cap`, which cannot be faked wrong.
+    """
+    recs = [_human("goal: keep it simple, no external deps")]
+    for i in range(200):
+        recs += [_asst("x" * 600, req=f"r{i}"), _human(f"next {i}")]
+    p = write(tmp_path, recs, name=name)
+    return p, transcript.load(p, max_bytes=p.stat().st_size // 2)
+
+
+def test_truncation_is_reported_with_its_magnitude(tmp_path):
+    """A transcript over the cap is read from its tail. Every count is then computed
+    on the remainder, and looks exactly like a count over the whole thing."""
+    p, sess = _oversized(tmp_path)
+    size = p.stat().st_size
+
+    assert sess.truncated is True
+    assert size // 2 <= sess.dropped_bytes < size, "the real offset, not an estimate"
+    assert sess.steps, "the tail must still parse — a partial record starts the read"
+
+    c = detect.continuity(sess)
+    assert c["fired"] is True
+    assert "MB" in c["summary"], "a bare boolean invites the reader to assume it was marginal"
+
+
+def test_truncation_costs_the_digest_its_anchor(tmp_path):
+    """Why it must be reported and not merely recorded: the digest's whole premise is
+    that the opening turns hold the goal, and after a tail read they are not there."""
+    _, sess = _oversized(tmp_path, name="anchor.jsonl")
+    assert "goal: keep it simple" not in digest.build(sess)
+
+
+def test_a_complete_record_says_so_and_does_not_fire(tmp_path):
+    sess = transcript.load(write(tmp_path, [_human("go"), _asst("done")], name="clean.jsonl"))
+    r = checks.run(checks.Context(session=sess))["continuity"]
+    assert r["fired"] is False
+    assert r["truncated"] is False and r["dropped_bytes"] == 0
+    assert r["warnings"] == []
+
+
+def test_a_caveat_is_reported_above_the_numbers_it_qualifies(tmp_path):
+    """A caveat printed under the counts it invalidates has already failed."""
+    _, sess = _oversized(tmp_path, name="hoist.jsonl")
+    results = checks.run(checks.Context(session=sess))
+    out = cli._text({
+        "session": {"id": "abcdef123", **digest.stats(sess), "analysis_ms": 1},
+        "checks": results,
+        "fired": sorted(n for n, r in results.items() if r.get("fired")),
+    })
+    body = out.splitlines()
+
+    assert "[PARTIAL]" in body[0], "the header carries counts that are now a lower bound"
+    assert body[1].startswith("! continuity"), "hoisted by evidence level, not by name"
+    assert "MB were never read" in body[1]
+    assert sum(1 for ln in body if ln.lstrip("*! ").startswith("continuity")) == 1, \
+        "hoisted out of its dimension, not printed in both places"
+
+
+# ------------------------------------- cross-session recurrence, and its scope
+#
+# This detector shipped for its whole life reporting zero on every real session, and was
+# twice queued for deletion under the project's own rule that an unfired detector does not
+# ship. The cause was not in the detector: `others` was every session *in the same project
+# directory*, and re-derived CLI syntax is a cross-*project* pattern. On the development
+# corpus, per-directory scope fires on 0 of 51 sessions and machine-wide scope on 8, the
+# top family being `claude plugin` re-derived in 4 sessions across 4 separate projects.
+#
+# So these are positive controls in the sense the module header means: the corpus measured
+# zero, and zero from the wrong comparison population is not evidence of anything.
+
+
+def _probe_log(root, project, name, cmds, when):
+    """A transcript under `root/projects/<project>` that probes `--help` for each command.
+
+    `when` varies because the start timestamp is half the fork fingerprint: two fixtures
+    probing identical commands at the identical instant are *supposed* to collapse into
+    one, so leaving it constant makes an independent-sessions test pass or fail for a
+    reason that has nothing to do with what it claims to check.
+    """
+    d = root / "projects" / project
+    d.mkdir(parents=True, exist_ok=True)
+    recs = [_human("go")]
+    for i, cmd in enumerate(cmds):
+        recs.append(_asst("", calls=[(f"t{i}", "Bash", {"command": cmd})], req=f"r{i}"))
+        recs.append(_result(f"t{i}", "usage: ..."))
+    for r in recs:
+        r["timestamp"] = when
+    p = d / name
+    p.write_text("\n".join(json.dumps(r) for r in recs))
+    return p
+
+
+def test_recurring_syntax_is_found_across_projects_not_just_this_folder(tmp_path, monkeypatch):
+    """The regression test for the bug that cost this detector its working life."""
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+    here = _probe_log(tmp_path, "-p-alpha", "a.jsonl", ["claude plugin --help"],
+                      "2026-08-08T00:00:01Z")
+    _probe_log(tmp_path, "-p-beta", "b.jsonl", ["claude plugin --help"],
+               "2026-08-08T00:00:02Z")
+    sess = transcript.load(here)
+
+    same_folder = discover.siblings("/p/alpha", exclude=here, scope="project",
+                                    contains=detect.PROBE_NEEDLE)
+    assert detect.cli_probes(sess, same_folder)["recurring"] == [], \
+        "the old per-directory scope is blind to it — this is the bug, pinned"
+
+    machine = discover.siblings("/p/alpha", exclude=here, contains=detect.PROBE_NEEDLE)
+    assert detect.cli_probes(sess, machine)["recurring"] == ["claude plugin"]
+    assert checks.run(checks.Context(session=sess, others=machine))["cli_probes"]["fired"] \
+        is True, "and it must survive the registry seam, which has leaked findings twice"
+
+
+def test_a_session_is_not_corroborated_by_its_own_fork(tmp_path, monkeypatch):
+    """The guard the roadmap called mandatory, demonstrated — because the corpus cannot.
+
+    Of 18 real probing sessions on the development corpus, **0 form a fork family**, so
+    dedup on and off are indistinguishable there: removing the guard entirely changes no
+    measurement. A constructed fork is therefore the only evidence the guard works, and
+    saying which of the two this is matters more than the test passing.
+
+    Note what `exclude` alone does not cover. Resuming copies the whole prefix, so a fork
+    of the session under test is a *different file* holding the *same* probe — excluding
+    the path leaves it in the pool, where it corroborates its own original and turns one
+    session counted twice into a cross-session finding.
+    """
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+    cmds = ["claude plugin --help"]
+    here = _probe_log(tmp_path, "-p-alpha", "a.jsonl", cmds, "2026-08-08T00:00:01Z")
+    fork = _probe_log(tmp_path, "-p-alpha", "a-resumed.jsonl", cmds, "2026-08-08T00:00:01Z")
+    sess = transcript.load(here)
+
+    assert discover.fingerprint(sess) == discover.fingerprint(transcript.load(fork)), \
+        "fixture check: these must actually look like a fork, or the test proves nothing"
+
+    unguarded = discover.siblings("/p/alpha", exclude=here, contains=detect.PROBE_NEEDLE)
+    assert detect.cli_probes(sess, unguarded)["recurring"] == ["claude plugin"], \
+        "the false positive, shown before it is suppressed"
+
+    guarded = discover.siblings("/p/alpha", exclude=here, contains=detect.PROBE_NEEDLE,
+                                exclude_forks_of=sess)
+    assert detect.cli_probes(sess, guarded)["recurring"] == []
+    assert guarded == []
+
+
+def test_a_genuine_other_session_survives_the_fork_guard(tmp_path, monkeypatch):
+    """The negative control for the guard: it must not suppress everything.
+
+    A guard that rejects all corroboration would make the test above pass while leaving
+    the detector exactly as dead as it was.
+    """
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+    here = _probe_log(tmp_path, "-p-alpha", "a.jsonl", ["gron --help"],
+                      "2026-08-08T00:00:01Z")
+    _probe_log(tmp_path, "-p-alpha", "a-resumed.jsonl", ["gron --help"],
+               "2026-08-08T00:00:01Z")
+    _probe_log(tmp_path, "-p-beta", "b.jsonl", ["gron --help"], "2026-08-08T00:00:09Z")
+    sess = transcript.load(here)
+
+    others = discover.siblings("/p/alpha", exclude=here, contains=detect.PROBE_NEEDLE,
+                              exclude_forks_of=sess)
+    r = detect.cli_probes(sess, others)
+    assert r["recurring"] == ["gron"]
+    assert r["families"][0]["other_sessions"] == 1, \
+        "one corroborating session, not two — the fork must not inflate the count"
+
+
+def test_the_scan_budget_is_spent_on_transcripts_that_could_match(tmp_path, monkeypatch):
+    """Why the `contains` pre-filter is correctness and not merely speed.
+
+    `limit` bounds the scan. Without a pre-filter it bounded it over *all* candidates, so
+    the budget went on sessions that could not contribute while the ones that could sat
+    outside the window unseen — a silent zero indistinguishable from a real one.
+    """
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+    here = _probe_log(tmp_path, "-p-alpha", "a.jsonl", ["gron --help"],
+                      "2026-08-08T00:00:59Z")
+    # The one corroborating session is the OLDEST file, behind a wall of newer noise.
+    old = _probe_log(tmp_path, "-p-beta", "b.jsonl", ["gron --help"], "2026-08-08T00:00:01Z")
+    os.utime(old, (1_700_000_000, 1_700_000_000))
+    for i in range(8):
+        noise = _probe_log(tmp_path, f"-p-noise{i}", "n.jsonl", ["ls -la"],
+                           f"2026-08-08T00:01:{i:02d}Z")
+        os.utime(noise, (1_800_000_000 + i, 1_800_000_000 + i))
+    os.utime(here, (1_900_000_000, 1_900_000_000))
+    sess = transcript.load(here)
+
+    budget = 3
+    unfiltered = discover.siblings("/p/alpha", exclude=here, limit=budget)
+    assert detect.cli_probes(sess, unfiltered)["recurring"] == [], \
+        "the budget went entirely on noise — the failure this pre-filter removes"
+
+    filtered = discover.siblings("/p/alpha", exclude=here, limit=budget,
+                                 contains=detect.PROBE_NEEDLE)
+    assert detect.cli_probes(sess, filtered)["recurring"] == ["gron"]
+    assert len(filtered) == 1, "and it cost one slot of the three, not all of them"
+
+
+def test_a_needle_straddling_a_read_boundary_is_still_found(tmp_path):
+    """A pre-filter's false negative looks exactly like a real zero, so it gets a test.
+
+    `_contains` reads in 1 MB chunks; a needle split across two of them is missed unless
+    the boundary is overlapped. That is the same class of error as the roadmap's "do not
+    glue lines together", inverted.
+    """
+    p = tmp_path / "straddle.jsonl"
+    chunk = 1 << 20
+    p.write_bytes(b"x" * (chunk - 3) + b"--help" + b"y" * 10)
+    assert discover._contains(p, b"--help") is True
+    assert discover._contains(p, b"--nope") is False
+
+
+# --------------------------------------------- what counts as a probed command
+
+def test_a_multiline_script_does_not_splice_a_command_across_lines(tmp_path):
+    """`\\s` spans newlines, and a Bash call is routinely a multi-line script.
+
+    Measured on the real corpus: `pip3 install --help` was reported as the family
+    `--version pip3 install`, glued across a line break. A detector that invents a command
+    nobody ran is the failure mode this project calls worse than having no detector.
+    """
+    assert detect._family("python3 --version\npip3 install --help") == "pip3 install"
+    assert detect._family("echo hi\ngron --help") == "gron"
+
+
+def test_a_probed_subcommand_keeps_the_command_it_belongs_to(tmp_path):
+    """Leftmost-match punishes a short word limit in a way that is easy to miss.
+
+    At two trailing words, `claude plugin marketplace add --help` cannot match from
+    `claude`, so the match slides right and the family comes out as `plugin marketplace
+    add` — naming a `plugin` executable that does not exist. Observed on the corpus.
+    """
+    assert detect._family("claude plugin marketplace add --help") == \
+        "claude plugin marketplace add"
+    assert detect._family("claude plugin --help") == "claude plugin"
+    assert detect._family("cd /tmp && sudo -A apt-get install --help") == "apt-get install"
+
+
+def test_prose_about_a_command_is_not_a_command_that_ran(tmp_path):
+    """The phantom probe, found by running /check-chat on the session that fixed this.
+
+    `_family` scanned the whole Bash `command` parameter, so a commit message *describing*
+    a `--help` parse bug counted as having run one — and with cross-project comparison
+    live, it manufactured `recurring: ["pip3 install"]`, a "this should be a skill" claim
+    for a command nobody invoked.
+
+    Both routes get a case, because fixing only the heredoc left the corpus firing count
+    unchanged: the same phantom came back through a shell label.
+    """
+    heredoc = (
+        "git commit -q -F - <<'EOF'\n"
+        "detect: stop splicing across newlines\n"
+        "`pip3 install --help` was reported as the family `--version pip3 install`.\n"
+        "EOF"
+    )
+    assert detect._family(heredoc) == ""
+
+    label = 'echo "=== did I actually run \'pip3 install --help\' this session? ==="'
+    assert detect._family(label) == ""
+
+
+def test_a_real_probe_survives_the_data_stripping(tmp_path):
+    """The negative control. A guard that suppressed everything would pass the test above
+    while leaving the detector as dead as the roadmap twice thought it was.
+
+    Both shapes are taken from real corpus commands: a probe on a later line of a
+    multi-line script, and a probe on the *same* line as a quoted label preceding it.
+    """
+    assert detect._family('echo "=== CLI surface ==="\ngron --help') == "gron"
+    assert detect._family('echo "=== surface ==="; python3 -m rotmeter --help') == \
+        "-m rotmeter"
+    assert detect._family('echo "=== setup.sh --help ==="\nbash ./scripts/setup.sh --help') \
+        == "setup.sh"
+    assert detect._family("cat <<'EOF' > /tmp/x\nnot a command --help\nEOF\ngron --help") \
+        == "gron", "a probe after the heredoc closes is still a probe"
+
+
+def test_an_unbalanced_quote_costs_its_own_line_and_no_more(tmp_path):
+    """Quote stripping is line-local, and this is the reason.
+
+    An apostrophe in an `echo` is ordinary. If the quote state ran to the end of a
+    multi-line script it would swallow every command after it — turning one stray
+    character into a silent zero for the rest of the call.
+    """
+    assert detect._family("echo don't do that\ngron --help") == "gron"
+
+
+def test_a_refused_command_was_never_run_so_it_corroborates_nothing(tmp_path):
+    """`here` has always excluded declined calls; the `others` side did not.
+
+    A command the user refused never ran, so its syntax was never re-derived. Counting it
+    on one side only let a probe that never happened corroborate one that did.
+    """
+    recs = [_human("go"), _asst("", calls=[("t1", "Bash", {"command": "gron --help"})]),
+            _result("t1", "usage")]
+    here = transcript.load(write(tmp_path, recs, name="here.jsonl"))
+
+    refused = [_human("go"), _asst("", calls=[("t1", "Bash", {"command": "gron --help"})]),
+               _result("t1", "The user doesn't want to proceed with this tool use", True)]
+    other = transcript.load(write(tmp_path, refused, name="other.jsonl"))
+    assert other.calls[0].declined is True, "fixture check: the harness's refusal wording"
+
+    assert detect.cli_probes(here, [other])["recurring"] == []
 
 
 # --------------------------------------------------------------- robustness
