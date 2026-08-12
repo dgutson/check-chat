@@ -199,12 +199,20 @@ No runtime dependencies — `pytest` is the only dev extra, and `dependencies` i
 `pyproject.toml` is empty on purpose: this has to run inside whatever environment the
 session under test already has.
 
-They cover the five wire-format traps that silently corrupt every count if mishandled
+They cover the six wire-format traps that silently corrupt every count if mishandled
 (one response spanning several records; tool results wearing a `user` role; subagent
 sidechains; a user-declined call flagged as an error; an interruption marker becoming a
-turn nobody typed), plus a positive control for sycophancy — which the development
-corpus measures at zero, so a detector never observed to fire would be
-indistinguishable from a broken one.
+turn nobody typed; and a compaction summary becoming another one, which strands a real
+question with no reply and credits its answer to ~4,000 characters of the machine's own
+prose), plus a positive control for sycophancy — which the development corpus measures at
+zero, so a detector never observed to fire would be indistinguishable from a broken one.
+
+The compaction tests run against a **real compacted transcript**, in
+`tests/fixtures/compacted.jsonl`. The development corpus has never compacted once — it
+belongs to a user on a 1M-token window — so the file was produced deliberately by rerunning
+a session under `CLAUDE_CODE_AUTO_COMPACT_WINDOW=100000` until the harness compacted it.
+That is the whole reason the trap above is known: it is not something the corpus could have
+shown, and everyone on a smaller window hits it routinely.
 
 ## License
 

@@ -1,12 +1,12 @@
 # Roadmap
 
-State as of 2026-08-10. Published; see "Done" below. Written so a session with no memory of how this got here can
+State as of 2026-08-11. Published; see "Done" below. Written so a session with no memory of how this got here can
 pick it up.
 
 The plugin is **installed and working end-to-end** on this machine: `/check-chat` runs,
 the deterministic pass takes ~280ms (~86ms of it before item 4 made the cross-session
 comparison actually load other sessions; `--siblings 0` returns it to ~20ms), the judge
-dispatches by `subagent_type`, and the report comes back. 64 tests pass, in the project's
+dispatches by `subagent_type`, and the report comes back. 90 tests pass, in the project's
 **own** virtualenv (`.venv/bin/pytest` from the repo root). What follows is what is not
 done, ordered by whether it blocks someone other than the author.
 
@@ -399,14 +399,124 @@ one is: a number is credible next to what it excludes, and both of these were on
 as waste. `rereads` is now genuinely rare, which makes its `evidenced` tier more accurate
 than before, not less. 4 tests.
 
+**10. Compaction awareness ships — and the blocker was an action, not a wait**
+(2026-08-11). Item 10 sat under "blocked on input Daniel does not have" for a day. It was
+the only blocked item whose input Daniel could *manufacture*, and doing so took about
+twenty minutes:
+
+`CLAUDE_CODE_AUTO_COMPACT_WINDOW` is read in tokens and clamped to a floor of `1e5`, so a
+throwaway session in a scratch directory, seeded with ~69k tokens of generated notes on
+Haiku and then given one more turn, crosses the window and compacts. `trigger: "auto"`.
+A following `claude -p -c "/compact"` adds a second seam, `trigger: "manual"`. **Two seams
+in one real file**, which is more than the item asked for.
+
+**The premise was wrong, in the most useful direction.** This item recorded "no compaction
+marker exists anywhere in the wire format", and that was a statement about the *corpus*
+wearing the clothes of a statement about the *format*. The format has an explicit record:
+
+```json
+{"type":"system","subtype":"compact_boundary","content":"Conversation compacted",
+ "compactMetadata":{"trigger":"auto","preTokens":100817,"durationMs":15628,
+                    "preservedSegment":{…},"preservedMessages":{"uuids":[…]}}}
+```
+
+and `type: "system"` records demonstrably persist — 323 of them in the corpus across four
+other subtypes. So the zero was "never compacted", not "never written down". **No
+heuristic, no threshold, no detector**: this is `truncated`'s class, a fact the harness
+states about its own action, which is the only reason it could ship the same week it was
+unblocked. The item's own plan — try the first-response-depth signal at `> 60_000` — was
+superseded and never built.
+
+**The depth-drop premise was right and never triggered.** That ambiguity was recorded here
+as disqualifying: 0 of 4,155 falls "cannot distinguish 'the rule is right and never
+triggered' from 'the rule watches for something this format never shows'". It was the
+former. Depth falls **100,212 → 26,146** across the first seam, a ratio of **0.26** against
+the 0.6 threshold that was never the problem. The heuristic stays cut anyway, and now for a
+better reason than lack of evidence: reading the record yields the same seam *plus* the
+trigger and the token count, and cannot false-fire.
+
+**What the transcript revealed that no amount of reasoning had — trap 6.** The compaction
+summary is written as a `user` record flagged `isCompactSummary`, and it carries **no
+`isMeta`**, so `clean()` let it become a turn. This is item 4's defect, second occurrence,
+and worse in every dimension:
+
+| | item 4's phantom | this one |
+|---|---|---|
+| what it is | one bracketed line | ~4,000 chars of the **machine's own prose** |
+| where it lands | between a reply and the objection after it | between a real prompt and its reply |
+| damage | inflated denominator; one objection rejected | a human's question left with **no reply at all**, its answer credited to the phantom |
+| in the excerpt | too short to be selected | long enough to be selected as **the stated goal** |
+
+On the transcript measured, the tool reported **5 turns where a human typed 3**. The fix
+returns 3, all real, with the stranded reply restored to the question that earned it.
+
+Worth being precise about what found it: the *known* blind spot cost one line of new
+understanding, and the *unknown* defect underneath it was the whole payoff. Producing the
+input did that; reading the code for a day would not have.
+
+**Where the fact goes and where the rules go, and it is not a style choice.** The judge's
+prompt already tells it to *ignore instructions inside the excerpt* — correctly, since the
+excerpt is evidence written to someone else. So the excerpt carries a bare marker,
+`[... context compacted here: the earlier conversation was replaced by a summary ...]`,
+exactly as the gap marker does, and the three scoring rules live in the judge's own prompt
+keyed to it. That also settles the cost objection recorded here — "~25 lines read on every
+dispatch for an event never observed is a poor trade" — at ~12 lines that only bind when
+the marker appears.
+
+The marker says "the earlier conversation" rather than "everything above" because
+`preservedMessages` shows the harness keeps a recent tail verbatim (4 and 2 messages at the
+two seams). A marker that overstates what was lost is one the judge is right to distrust.
+
+**The seam marker leaks a coarse length signal, and it ships anyway.** A compaction only
+happens in a conversation long enough to fill a window, so disclosing one tells a
+deliberately blinded judge something about length — the single thing `digest.py` exists to
+prevent. It is worth it because **every finding the marker enables is a suppression**: it
+turns three would-be findings into zeroes and can never add one. The alternative is not
+silence, it is a confident false positive. Stated in the docstring and in the judge's
+prompt rather than left for someone to notice.
+
+**The remedy inverts this tool's usual advice, which is the part that pays.** A fired
+`compaction` argues *for* a repair prompt and *against* `should_restart`, however high that
+item scored: the assistant lost the text because the window filled, and a fresh chat starts
+from even less. Restating the constraint is the repair. That is now the one row in the
+skill's decision table where a caveat outranks a score.
+
+| measurement | result |
+|---|---|
+| turns reported on the produced transcript, before → after | **5 → 3** (2 phantoms, both summaries) |
+| real questions left with no reply, before → after | **1 → 0** |
+| depth across the first seam | **100,212 → 26,146** tok (ratio 0.26) |
+| seams captured, with the harness's own trigger | **2** — `auto` at 100,817 tok, `manual` at 26,975 tok |
+| genuine compaction records in the 274-transcript corpus | **0** — so nothing else on this machine changes |
+| this session's transcript, which discusses the marker names in prose | **does not fire** — item 13's phantom, avoided by keying on the record |
+
+9 tests. Two are negative controls, and they are the point: an uncompacted session must
+produce no marker and no caveat, because a marker present by default would tell the judge
+to forgive real confusion everywhere — this check's failure mode is *silence*, so it has to
+be shown to be silent. The live one is better than the written one: **this session's own
+transcript contains 38 lines of prose about `compact_boundary` and `isCompactSummary`**, and
+the check correctly ignores all of them.
+
+Shipping on structural justification rather than a rate, per item 14's rule: the corpus
+contains zero compactions and always will while Daniel runs a 1M window, so frequency here
+measures his settings, not the defect. The defect is *demonstrated* on the only transcript
+that can exhibit one. And the audience makes it strategic rather than merely correct —
+everyone on a smaller window compacts routinely, so the plugin's largest blind spot was
+invisible in the author's corpus and universal for its actual users. `caveat` did its job
+again: no consumer of the tier was edited, and the new check hoists above the numbers it
+reinterprets on its own.
+
 ---
 
 ## Now — nothing, and that is a measured statement
 
-Every check has been audited for item 4's failure (item 12), no defect is outstanding, and
-item 8 shipped as item 14. What remains is items 6, 7, 9 and 10, all blocked on transcripts
-Daniel does not have. Read item 12's rule before touching any of them, item 13 before
-trusting a corpus sweep, and item 14 before adding anything else to the excerpt.
+Every check has been audited for item 4's failure (item 12), no defect is outstanding,
+item 8 shipped as item 14, and item 10 shipped by manufacturing the input it was waiting
+for. What remains is items 6, 7 and 9, blocked on transcripts from a *different user* —
+which is the one kind of input that cannot be manufactured, and worth contrasting with item
+10, whose blocker was misfiled as a wait for a year's worth of luck when it was twenty
+minutes of work. Read item 12's rule before touching any of them, item 13 before trusting a
+corpus sweep, and item 14 before adding anything else to the excerpt.
 
 ---
 
@@ -456,8 +566,13 @@ establishes no base rate and no threshold for the population these were built fo
   the detectors are quiet for an expert, which is the correct behaviour and not evidence
   of anything else.
 
-**10. Compaction awareness.** Built, measured, and cut on 2026-08-10 — kept here because
-the *reasoning* survives the measurement and is the expensive half to rediscover.
+**10. Compaction awareness** — **done, see the Done section.** Shipped 2026-08-11 by
+producing the transcript this section said it was waiting for. Everything below is the
+state it was cut in on 2026-08-10, kept because the reasoning is what survived and one
+line of it turned out to be false in a way worth leaving visible: *"no compaction marker
+exists anywhere in the wire format"* was a fact about the corpus, written as a fact about
+the format. The format has an explicit `compact_boundary` record, and the whole item
+collapsed to reading it.
 
 **Why it matters.** After a compaction the assistant holds a summary, not the text. So
 re-asking for something settled before the seam is **correct behaviour, not `confusion`**,
@@ -486,8 +601,10 @@ cannot distinguish "the rule is right and never triggered" from "the rule watche
 something this format never shows". Either way there is no ground truth to check a
 replacement against, which is what disqualifies it.
 
-- *Unblocks when:* one compacted transcript exists — deliberately produce one by running
-  a session to compaction on a small context window, and keep the file
+- *Unblocked exactly this way,* and the recipe is worth keeping because it cost twenty
+  minutes: `CLAUDE_CODE_AUTO_COMPACT_WINDOW` is in tokens with a `1e5` floor, so seed a
+  throwaway session with ~69k tokens on a cheap model, take one more turn, and it compacts
+  itself. `/compact` in print mode adds a second seam with `trigger: "manual"`
 - *When it does:* the first-response-depth signal is the cheap one to try, because it is
   already measured. A ceiling of 44,487 over 50 sessions means a `> 60_000` first-response
   threshold has **zero false positives on the corpus today** — but confirm against the
@@ -529,6 +646,17 @@ replacement against, which is what disqualifies it.
 - **`cli_probes` reads other projects' transcripts.** Only the command family crosses the
   boundary, never file contents, and it stays on the machine — but a report for project A
   can now name a command probed in project B. `--siblings 0` disables it.
+- **The compaction marker discloses a coarse length signal to a blinded judge.** A
+  compaction only happens in a conversation long enough to fill a window, so the marker
+  tells the judge something `digest.py` exists to withhold. Accepted, because every finding
+  the marker enables is a **suppression** — it can only turn three would-be findings into
+  zeroes, never add one — and the alternative is not silence but a confident false positive.
+  The judge's prompt says this outright, so the leak cannot be re-derived as a hint.
+- **A seam in the excerpt's omitted middle is disclosed without its position.** The marker
+  is printed beside the gap that swallowed it, which says a compaction happened *somewhere*
+  in the cut material and not where. That is deliberate — a constraint in Exchange 1 can
+  have been lost to a seam the excerpt never shows — but it means the judge cannot tell
+  which side of the seam a given omitted exchange fell on, and it should not try.
 - **The tool-call ledger cannot see the omitted middle.** It covers the excerpt's exchanges
   only — 89% of calls on the corpus, and the 11% it misses sit in the gap the digest already
   cut. This is deliberate: widening it to the whole session would disclose length and turn
@@ -566,7 +694,7 @@ exists.
 | Recency bias, semantic drift, anchor loss, terminology mutation | All die against a null. A within-session **shuffle reproduces the trend identically**; own-anchor containment is flat (0.102 / 0.086 / 0.093 / 0.112). rot-metrics already built, measured (AUC 0.49–0.53) and disabled this exact detector |
 | Generic recurring tool-call sequence miner | Exactly **zero**. Of 684 consecutive-Bash trigrams, 7 repeat anywhere and **0 across sessions**. The naive version looks like it works — every apparent hit is the duplicate-log artifact the fork-dedup guard exists to remove |
 | Byte-identical re-read / within-session re-fetch | Verified **0**. Fourteen repeat `Read`s share byte-identical *args*; none share byte-identical *results*, and 12 of 14 had the file edited in between |
-| Compaction as a **drop in context depth** | **0 of 4,155** consecutive measurements above 40k fell at all — depth is strictly monotonic within a session file. The threshold is not the problem; see item 10 before rebuilding this |
+| Compaction as a **drop in context depth** | The entry that got *resolved* rather than confirmed, and it argues for keeping these rows. 0 of 4,155 falls, and the recorded worry was that this could not distinguish "right and never triggered" from "watching for something the format never shows". A produced compacted transcript settled it: **the rule was right** — depth falls 100,212 → 26,146, ratio 0.26 against its 0.6 threshold. It stays deleted regardless, because the harness writes a `compact_boundary` record and reading a marker beats inferring one. Do not rebuild the heuristic; do not read this row as the idea having been wrong |
 | Quote checking **scoped to one speaker's line** | Rejected on reasoning, not measurement: it false-fails a `self_consistency` quote that elides across two exchanges — the item where cross-exchange quoting is the *point*. Item 11 checks presence, not attribution, deliberately |
 | Cross-session comparison **scoped to one project directory** | The inverse entry: this one was measured to nothing and the measurement was *right about the number and wrong about the cause*. 0 of 51 sessions per-directory, 8 of 51 machine-wide, same detector and same corpus. Do not narrow it back for cost — the pre-filter already bounds that, and the flag exists |
 | **`producers` across sessions** | 8 heads in ≥2 sessions, and every one of them is `pytest`, `./test.sh`, `venv`, `gh auth status` or a `--help` already counted elsewhere — the exact list the within-session guards were written to suppress. The "no intervening mutation" guard **cannot exist** at that scope. Identical full command in ≥2 sessions: 5 of 1,258. See item 12's rule |
@@ -602,6 +730,21 @@ Each cost a full re-run to discover, so they are recorded here rather than relea
   showed **24** — every one the row cap under-disclosing, which is harmless, but the clean
   number had already been written into a docstring as equality and was wrong there. Import
   the function. If a sweep cannot call it, that is the finding.
+- **Reading the producer is not reading the product.** Item 10's format was recovered from
+  the harness binary before a compacted transcript existed, and its construction site sets
+  `compactMetadata.postTokens`. The record the harness actually *writes* has no
+  `postTokens` — it is assigned after serialisation. Two lines of code had already been
+  written against it. This is "measure the shipping function, never a model of it" pointed
+  at **someone else's** code, where it is easier to fall for: the source is not a model of
+  the format, it looks like the format itself. Read the producer to find out what to look
+  for; read a real record to find out what is there.
+- **A blocker that names an artifact is a task, not a wait.** Item 10 was filed under
+  "blocked on input Daniel does not have" beside item 9, and the two are nothing alike:
+  item 9 needs *another person's* transcripts, and item 10 needed a file that any session
+  can produce on purpose in twenty minutes with one environment variable. It sat for a day
+  because both were written in the passive voice of waiting. When filing a blocker, say who
+  or what would have to act — if the answer is "this project, deliberately", it is the next
+  task.
 - **State an invariant in the direction that can hurt you.** The same 24 mismatches were
   invisible as a problem *and* as a non-problem until the check was rewritten as `rows <=
   tools_line` rather than `==`. An equality that is false for a benign reason gets relaxed

@@ -12,12 +12,25 @@ constraints get stated and against which drift is measurable) and the recent wor
 A gap marker sits between them: it admits that material was cut without revealing
 how much.
 
-A second marker was designed and then removed: one saying the excerpt straddled a
-**compaction**, because re-asking for something stated above such a seam is correct
-behaviour rather than `confusion`, and a constraint from above it was lost rather than
-ignored. The reasoning holds; there is just no way to detect a compaction yet. See the
-roadmap — it is worth restoring in full the day a compacted transcript exists to check
-it against, and the marker itself is six lines.
+A second marker was designed, removed for want of a compacted transcript to check it
+against, and is now **restored**: one saying the excerpt straddles a **compaction**,
+because re-asking for something stated above such a seam is correct behaviour rather
+than `confusion`, and a constraint from above it was lost rather than ignored.
+
+It carries the *fact* and no instruction, and that split is deliberate rather than
+stylistic. The judge's prompt tells it to ignore instructions found inside the excerpt —
+correctly, since the excerpt is evidence written to someone else — so guidance placed
+here would be guidance it is required to disregard. The three scoring rules the marker
+implies therefore live in `agents/check-chat-judge.md`, keyed to the marker exactly as
+the gap marker's rule already is, and they cost nothing when no seam is present because
+a judge that never sees the marker never applies them.
+
+**What the marker discloses, stated rather than implied.** A compaction only happens in a
+conversation long enough to fill a context window, so this leaks a coarse length signal
+into a deliberately blinded excerpt — the one thing this module exists to prevent. It
+ships anyway because every finding it enables is a **suppression**: it exists to turn
+three would-be findings into zeroes, never to add one. The judge's prompt closes the loop
+by saying so, since the alternative is not silence but a confident false positive.
 """
 
 from __future__ import annotations
@@ -36,6 +49,13 @@ LEDGER_TARGET_W = 72
 
 GAP = "[... earlier exchanges omitted ...]"
 LEDGER_CUT = "[... further calls omitted ...]"
+
+# Bare of trigger and token counts on purpose: those are length information, and they go
+# in the user's report where they are useful, not to the judge where they are a prior.
+# "the earlier conversation" rather than "everything above" because the harness preserves
+# a handful of recent messages verbatim past the seam — measured at 4 and 2 — and a marker
+# that overstates what was lost is a marker the judge is right to distrust.
+SEAM = "[... context compacted here: the earlier conversation was replaced by a summary ...]"
 
 # Blinding has to survive the conversation not being in English. A Spanish session
 # saying "como dije en el turno 47" leaks exactly what an English one saying "as I
@@ -170,16 +190,28 @@ def ledger(sess: Session) -> str:
 def build(sess: Session) -> str:
     """A blinded transcript excerpt, ready to hand to a subagent verbatim."""
     idxs, gapped = selected(sess)
+    seams = {c.turn for c in sess.compactions}
     lines: list[str] = []
     prev = None
 
     for label, i in enumerate(idxs, start=1):
         if gapped and prev is not None and i != prev + 1:
             lines.append(f"\n{GAP}\n")
+            # A seam buried in the omitted material still governs how the material that
+            # *survived* must be read — a constraint in Exchange 1 can have been lost to a
+            # compaction the excerpt never shows — so it is disclosed beside the gap rather
+            # than dropped with the exchanges it happened to fall between.
+            if any(prev < t < i for t in seams):
+                lines.append(f"{SEAM}\n")
         prev = i
         t = sess.turns[i]
         lines.append(f"### Exchange {label}")
         lines.append("USER: " + _scrub(t.prompt.strip())[:PROMPT_CHARS])
+        # Between the prompt and the reply, because that is where an automatic compaction
+        # actually falls: it fires while a turn is being served, so the human's question
+        # was asked before the seam and answered after it.
+        if i in seams:
+            lines.append(SEAM)
         reply = _scrub(sess.reply_text(i, REPLY_CHARS)).strip()
         lines.append("ASSISTANT: " + (reply[:REPLY_CHARS] if reply else "(no prose; tool calls only)"))
         tools = _tools_line(sess, i)
@@ -210,11 +242,12 @@ def stats(sess: Session) -> dict:
         "depth_tokens": sess.depth,
         "truncated": sess.truncated,
         "dropped_bytes": sess.dropped_bytes,
+        "compactions": len(sess.compactions),
         "model": sess.model,
         "digest_exchanges": len(idxs),
         "digest_gapped": gapped,
     }
 
 
-__all__ = ["build", "ledger", "stats", "selected", "GAP", "LEDGER_CUT",
+__all__ = ["build", "ledger", "stats", "selected", "GAP", "SEAM", "LEDGER_CUT",
            "HEAD_TURNS", "TAIL_TURNS", "LEDGER_ROWS"]

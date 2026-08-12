@@ -203,6 +203,13 @@ def _continuity(ctx):
     return {**c, "line": f"continuity {c['summary']}"}
 
 
+@register("compaction", "context", evidence="caveat",
+          question="Was the conversation's own history replaced by a summary while it ran?")
+def _compaction(ctx):
+    c = detect.compaction(ctx.session)
+    return {**c, "line": f"compaction {c['summary']}"}
+
+
 @register("failures", "context", evidence="raw",
           question="How many calls failed, and from how many distinct causes?")
 def _failures(ctx):

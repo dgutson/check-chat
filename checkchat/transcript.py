@@ -2,7 +2,7 @@
 
 Self-contained on purpose — check-chat is meant to be installable on its own.
 
-Five things about the wire format are easy to get wrong, and each of them silently
+Six things about the wire format are easy to get wrong, and each of them silently
 corrupts every count downstream:
 
 1. One API response is written as SEVERAL records, one per content block, sharing a
@@ -20,6 +20,21 @@ corrupts every count downstream:
    discards that, and then finds the *real* objection preceded by an empty reply and
    rejects it too. Interrupting and then pushing back is the highest-signal sycophancy
    moment there is, and this returned a confident zero for it.
+6. A **compaction** writes its summary as a `user` record flagged `isCompactSummary`,
+   and — measured on a real compacted transcript — that record carries no `isMeta`, so
+   trap 5 arrives a second time by a different door. It is the same defect and worse in
+   every dimension: the phantom is ~4,000 characters of the *machine's own prose* rather
+   than one bracketed line, it is long enough to be selected into the excerpt as the
+   stated goal, and the auto-compaction seam falls **between a real prompt and its
+   reply** — so the human's question is left with no reply at all and its answer is
+   credited to the phantom. On the transcript this was measured against, the tool
+   reported 5 turns where a human typed 3.
+
+   The seam itself is a separate `type: "system"` record, `subtype: "compact_boundary"`,
+   and it is worth far more than the phantom it precedes: above it the assistant held a
+   summary, not the text. Re-asking there is correct behaviour rather than `confusion`,
+   and a constraint stated above it was *lost* rather than disregarded. So the seam is
+   kept (see `Compaction`) rather than merely skipped.
 """
 
 from __future__ import annotations
@@ -84,6 +99,36 @@ class Step:
 
 
 @dataclass
+class Compaction:
+    """One point where the harness replaced the history above it with a summary.
+
+    Read from the `compact_boundary` record rather than inferred. That distinction is the
+    whole reason this ships: a detector can be wrong, and a marker the harness wrote about
+    its own action cannot. A depth-drop heuristic was built for this and cut for want of
+    evidence — the drop turns out to be real (100,212 -> 26,146 tokens on the transcript
+    measured here, a ratio of 0.26 against a 0.6 threshold) but it is strictly worse than
+    reading the record, so it stays cut.
+
+    `step` is the index of the first response *after* the seam, which is what makes one
+    field serve both triggers: an automatic compaction fires while a turn is being served,
+    so its seam falls mid-turn, while a manual `/compact` lands between turns. Both were
+    produced and measured; both reduce to "everything from this response onward was
+    generated from a summary".
+
+    `pre_tokens` is the harness's own count of the context it discarded. There is no
+    `post_tokens` — the field exists in the harness's source and is *not* in the record it
+    writes, so it is deliberately not read here.
+    """
+
+    step: int
+    trigger: str = "unknown"     # "auto" | "manual" — the harness's own word for it
+    pre_tokens: int = 0
+    summary_chars: int = 0       # size of the phantom turn this replaced
+    preserved: int = 0           # messages kept verbatim past the seam, per the record
+    turn: int = -1               # resolved after parsing: the turn owning `step`
+
+
+@dataclass
 class Turn:
     """One human instruction and everything the assistant did in response."""
 
@@ -101,6 +146,7 @@ class Session:
     steps: list[Step] = field(default_factory=list)
     turns: list[Turn] = field(default_factory=list)
     calls: list[Call] = field(default_factory=list)
+    compactions: list[Compaction] = field(default_factory=list)
     truncated: bool = False
     dropped_bytes: int = 0       # bytes ahead of the read window, when truncated
     model: str | None = None
@@ -256,6 +302,19 @@ def load(path: str | Path, max_bytes: int = 24 * 1024 * 1024) -> Session:
                     pending[b["id"]] = call
             continue
 
+        if rtype == "system" and rec.get("subtype") == "compact_boundary":
+            meta = rec.get("compactMetadata")
+            meta = meta if isinstance(meta, dict) else {}
+            kept = meta.get("preservedMessages")
+            kept = kept.get("uuids") if isinstance(kept, dict) else None
+            sess.compactions.append(Compaction(
+                step=len(sess.steps),
+                trigger=str(meta.get("trigger") or "unknown"),
+                pre_tokens=int(meta.get("preTokens") or 0),
+                preserved=len(kept) if isinstance(kept, list) else 0,
+            ))
+            continue
+
         if rtype != "user":
             continue
 
@@ -287,6 +346,21 @@ def load(path: str | Path, max_bytes: int = 24 * 1024 * 1024) -> Session:
             if saw_result:
                 continue
 
+        # Trap 6. Keyed on the flag, never on the summary's opening sentence: the record
+        # says what it is, and matching its prose would also match a human quoting it.
+        if rec.get("isCompactSummary"):
+            at = len(sess.steps)
+            for c in sess.compactions:
+                if c.step == at:
+                    c.summary_chars = len(_text_of(content) or "")
+                    break
+            else:
+                # No boundary record alongside it. The summary alone still proves a seam,
+                # and a seam with an unknown trigger beats a phantom turn.
+                sess.compactions.append(Compaction(
+                    step=at, summary_chars=len(_text_of(content) or "")))
+            continue
+
         if rec.get("isMeta"):
             continue
         text = clean(_text_of(content))
@@ -294,11 +368,18 @@ def load(path: str | Path, max_bytes: int = 24 * 1024 * 1024) -> Session:
             turn = len(sess.turns)
             sess.turns.append(Turn(index=turn, prompt=text, first_step=len(sess.steps)))
 
+    # Which exchange the seam falls in — the turn that owns the first post-seam response.
+    # A seam with no response after it belongs to the last turn: the compaction is the
+    # final thing that happened, which is exactly what a manual `/compact` looks like.
+    for c in sess.compactions:
+        c.turn = (sess.steps[c.step].turn if c.step < len(sess.steps)
+                  else len(sess.turns) - 1)
+
     return sess
 
 
 __all__ = [
-    "Call", "Session", "Step", "Turn",
+    "Call", "Compaction", "Session", "Step", "Turn",
     "load", "clean", "target_key",
     "EDIT_TOOLS", "READ_TOOLS", "SEARCH_TOOLS",
 ]

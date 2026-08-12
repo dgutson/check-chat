@@ -1314,3 +1314,178 @@ def test_malformed_input_never_raises(tmp_path):
 
 def test_missing_file_never_raises(tmp_path):
     assert transcript.load(tmp_path / "nope.jsonl").steps == []
+
+
+# ------------------------------------------------------ compaction: trap 6 and the seam
+#
+# These are positive controls of the strongest kind available to this project: the input is
+# a real compacted transcript, not a hand-written approximation of one. It did not exist
+# when the compaction work was first attempted — the development corpus runs a 1M window
+# and has never compacted once — so the whole thing was blocked on producing one, which was
+# done deliberately by rerunning a session under `CLAUDE_CODE_AUTO_COMPACT_WINDOW=100000`
+# until the harness compacted it, first automatically and then again via `/compact`.
+#
+# `tests/fixtures/compacted.jsonl` is that transcript with long strings shortened. The two
+# `compact_boundary` records are kept **byte-for-byte**, because they are the thing under
+# test; every other record keeps its structure and its numbers. Do not assert on
+# `summary_chars` from this fixture — the trimming is the one thing it does not preserve.
+
+FIXTURE = Path(__file__).resolve().parent / "fixtures" / "compacted.jsonl"
+
+
+def _compacted():
+    return transcript.load(FIXTURE)
+
+
+def test_the_compaction_summary_is_not_a_turn():
+    """Trap 6, and it is trap 5 arriving by a second door.
+
+    The harness writes its summary as a `user` record carrying no `isMeta`, so it used to
+    become a turn nobody typed — ~4,000 characters of the machine's own prose, long enough
+    to be selected into the excerpt as the stated goal. On this transcript the tool reported
+    **5 turns where a human typed 3**.
+
+    The inflated count is again the harmless half. An automatic compaction fires while a
+    turn is being served, so the phantom lands between a real prompt and its reply: the
+    human's question was left with no reply at all and its answer was credited to the
+    phantom, which is precisely the pairing `sycophancy` depends on.
+    """
+    sess = _compacted()
+    assert len(sess.turns) == 3, "two phantom summary turns, both from compactions"
+    for t in sess.turns:
+        assert "continued from a previous conversation" not in t.prompt, \
+            "the machine's summary is not something the human said"
+    assert all(sess.reply_text(t.index) for t in sess.turns), \
+        "the seam must not strand a real question with no reply"
+    assert sess.reply_text(2).startswith("Components persist"), \
+        "the reply below the seam belongs to the question above it"
+
+
+def test_the_seam_is_read_from_the_record_not_inferred():
+    """Both triggers, both read from `compactMetadata`. This is why it ships where the
+    depth heuristic could not: a marker the harness wrote about its own action cannot be
+    wrong, and `auto` versus `manual` is its own word for it, not our guess."""
+    seams = _compacted().compactions
+    assert [c.trigger for c in seams] == ["auto", "manual"]
+    assert [c.pre_tokens for c in seams] == [100_817, 26_975]
+    assert all(c.preserved > 0 for c in seams), \
+        "the harness keeps a recent tail verbatim, which is why the marker says 'earlier'"
+
+
+def test_the_depth_drop_is_real_and_the_heuristic_still_stays_cut():
+    """The cut detector's premise, finally observed. Across 4,155 consecutive corpus
+    measurements depth never fell at all, which could not distinguish "the rule is right
+    and never triggered" from "the rule watches for something this format never shows".
+    It was the former: depth falls 100,212 -> 26,146 here, a ratio of 0.26 against the
+    0.6 threshold that was never the problem.
+
+    The heuristic stays cut anyway, and this test is the reason it can be: reading the
+    record gets the same seam plus the trigger and the token count, and cannot false-fire.
+    """
+    sess = _compacted()
+    seam = sess.compactions[0]
+    before, after = sess.steps[seam.step - 1].depth, sess.steps[seam.step].depth
+    assert before > after, "the first depth fall ever observed in this project"
+    assert after / before < 0.6, "the threshold was never the problem"
+
+
+def test_the_seam_marker_sits_between_the_prompt_and_the_reply():
+    """Where an automatic compaction actually falls. The prompt was typed before the seam
+    and answered after it, so a marker above the exchange would misplace the boundary and
+    one below the reply would arrive after the reader needed it."""
+    text = digest.build(_compacted())
+    assert digest.SEAM in text
+    head, tail = text.split(digest.SEAM)
+    assert head.rstrip().endswith("Now name the second most common theme.")
+    assert tail.lstrip().startswith("ASSISTANT: Components persist")
+    assert "100,817" not in text and "auto" not in text, \
+        "trigger and token counts are length information; they go to the user, not the judge"
+
+
+def test_a_seam_inside_the_omitted_middle_is_still_disclosed(tmp_path):
+    """A constraint in Exchange 1 can have been lost to a compaction the excerpt never
+    shows. Dropping the seam with the exchanges it fell between would leave the judge
+    scoring that loss as a retention failure, with no way to know better."""
+    recs = [_human("Goal: ship it. Constraint: standard library only.")]
+    for i in range(30):
+        recs += [_asst(f"working on part {i}", req=f"r{i}"), _human(f"next step {i}")]
+    recs.insert(9, {"type": "system", "subtype": "compact_boundary",
+                    "timestamp": "2026-08-08T00:00:00Z",
+                    "compactMetadata": {"trigger": "auto", "preTokens": 100_000}})
+    sess = transcript.load(write(tmp_path, recs, name="midseam.jsonl"))
+    idxs, gapped = digest.selected(sess)
+    assert gapped and sess.compactions[0].turn not in idxs, \
+        "fixture must put the seam in the material that gets cut"
+
+    text = digest.build(sess)
+    assert digest.SEAM in text, "a seam in the gap still governs how the survivors read"
+    assert text.index(digest.GAP) < text.index(digest.SEAM), \
+        "disclosed beside the gap that swallowed it, not attached to an unrelated exchange"
+
+
+def test_compaction_is_hoisted_above_the_numbers_it_reinterprets():
+    """The registry seam has dropped a correctly computed finding on the way out twice, so
+    a check is not shipped until it is seen in `--text`. It must also arrive as a *caveat*:
+    it qualifies what the other numbers mean rather than adding to them."""
+    sess = _compacted()
+    results = checks.run(checks.Context(session=sess))
+    assert results["compaction"]["evidence"] == "caveat"
+    assert results["compaction"]["fired"] is True
+
+    body = cli._text({
+        "session": {"id": "abcdef123", **digest.stats(sess), "analysis_ms": 1},
+        "checks": results,
+        "fired": sorted(n for n, r in results.items() if r.get("fired")),
+    }).splitlines()
+    hoisted = [ln for ln in body if ln.startswith("! ")]
+    assert any("compaction" in ln for ln in hoisted), "hoisted by evidence level"
+    assert sum(1 for ln in body if ln.lstrip("*! ").startswith("compaction")) == 1, \
+        "hoisted out of its dimension, not printed in both places"
+    assert "starting a fresh chat does not" in " ".join(hoisted), \
+        "the actionable half: the two readings imply opposite repairs"
+
+
+def test_an_uncompacted_session_gets_no_marker_and_no_caveat(tmp_path):
+    """The negative control, and it is the one that matters. A caveat that fires on every
+    session is not a caveat, and a seam marker present by default would tell the judge to
+    forgive real confusion everywhere — this check's failure mode is silence, so it must be
+    shown to be silent when nothing happened."""
+    recs = [_human("Goal: ship it.")]
+    for i in range(30):
+        recs += [_asst(f"part {i}", req=f"r{i}"), _human(f"next {i}")]
+    sess = transcript.load(write(tmp_path, recs, name="clean.jsonl"))
+
+    assert sess.compactions == []
+    c = detect.compaction(sess)
+    assert c["fired"] is False and c["seams"] == [] and c["warnings"] == []
+    assert digest.SEAM not in digest.build(sess)
+    assert digest.stats(sess)["compactions"] == 0
+
+
+def test_a_summary_with_no_boundary_record_still_suppresses_the_phantom(tmp_path):
+    """Defence for a wire format that is not ours to freeze. The flag on the summary and
+    the `compact_boundary` record are written by different code paths; if a version ever
+    writes one without the other, the phantom turn must still not appear. An unknown
+    trigger is a far cheaper wrong answer than 4,000 characters of the machine's own prose
+    entering the analysis as the user's goal."""
+    sess = transcript.load(write(tmp_path, [
+        _human("first real instruction"),
+        _asst("done"),
+        {"type": "user", "isCompactSummary": True, "timestamp": "2026-08-08T00:00:00Z",
+         "message": {"role": "user", "content": "This session is being continued…"}},
+        _asst("after the seam", req="r2"),
+    ], name="orphan.jsonl"))
+
+    assert len(sess.turns) == 1, "the summary is not a turn even with no boundary record"
+    assert len(sess.compactions) == 1
+    assert sess.compactions[0].trigger == "unknown"
+    assert detect.compaction(sess)["fired"] is True
+
+
+def test_an_unmeasured_depth_is_null_and_not_zero():
+    """A manual `/compact` as the last thing that happened has no response after it. A 0
+    there would read as "the context dropped to nothing", which is a confident number where
+    there is no measurement — the failure this project treats as worse than a gap."""
+    seams = detect.compaction(_compacted())["seams"]
+    assert seams[0]["depth_before"] == 100_212 and seams[0]["depth_after"] == 26_146
+    assert seams[1]["depth_after"] is None, "no response after the seam, so nothing measured"

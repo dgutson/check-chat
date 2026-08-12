@@ -186,10 +186,29 @@ A fired `caveat` check qualifies everything else in the report, so it is the one
 you must not bury. Its `warnings` list is already written for the user; quote it rather
 than paraphrasing.
 
-Today there is one: `continuity` fires when the transcript was larger than the read cap,
-so it was read **from its tail**. Every count in dimension 3 is then a lower bound on a
-fragment — say that once, plainly, and do not present the totals as complete.
-`dropped_bytes` says how much was never read.
+Today there are two.
+
+`continuity` fires when the transcript was larger than the read cap, so it was read **from
+its tail**. Every count in dimension 3 is then a lower bound on a fragment — say that
+once, plainly, and do not present the totals as complete. `dropped_bytes` says how much
+was never read.
+
+`compaction` fires when the harness replaced the conversation's own history with a summary
+while it was running. This one changes your **recommendation**, not just your confidence,
+and it is the only caveat that does:
+
+- The judge has already been told to score `confusion` at 0 across the seam, to read a
+  mismatch with earlier material as amnesia, and to say when a dropped constraint was
+  stated above the seam. If its reply reports one of those *as* degradation anyway, say so
+  and drop the item — that is the false positive this check exists to prevent.
+- **Do not recommend starting a fresh chat on the strength of a compaction loss.** A fresh
+  chat is exactly the wrong advice here: the assistant lost the text because the window
+  filled, and a new conversation starts from even less. Restating the lost constraint is
+  the repair, so a fired `compaction` argues *for* a repair prompt and *against*
+  `should_restart`, however high that item scored.
+- `seams` gives each seam's `trigger` and `pre_tokens`, and `depth_before`/`depth_after`
+  say how much context was dropped. Those numbers are for the user; the judge never sees
+  them.
 
 ### `other_findings` — the one thing no check can see
 
@@ -316,6 +335,7 @@ means the context is full, which is not the same as degraded.
 | any item ≥ 2, `should_restart` ≤ 1 | **Repair prompt** — the session is worth keeping |
 | a quoted `other_finding` the user can act on | **Repair prompt**, written for that finding |
 | `should_restart` ≥ 2 | Offer `/handoff` and a fresh chat |
+| `should_restart` ≥ 2 **and `compaction` fired** | **Repair prompt** that restates what was lost. The caveat outranks the score here, for the reason given above: a fresh chat cannot recover what the window discarded |
 | dimension 3 fired | **Build-this prompt** — see below |
 
 ### The repair prompt

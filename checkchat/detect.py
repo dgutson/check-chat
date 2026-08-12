@@ -657,6 +657,64 @@ def failures(sess: Session) -> dict:
 
 # --------------------------------------------------- 10. completeness of the record
 
+def compaction(sess: Session) -> dict:
+    """Did the harness replace the conversation's own history with a summary?
+
+    Like `continuity`, this is not a detector and cannot be wrong: the condition is a
+    `compact_boundary` record the harness wrote about its own action. That is why it can
+    ship where the thing it replaces could not — a depth-drop heuristic was built for this
+    and cut, and the drop turns out to be real (100,212 -> 26,146 tokens across the first
+    seam measured, ratio 0.26 against the 0.6 threshold it used) but reading a marker beats
+    inferring one, so the heuristic stays cut rather than being restored alongside.
+
+    **Why it is a caveat and not a finding.** Everything above a seam is available to the
+    assistant only as a summary, which changes what three of the judge's items *mean*
+    rather than adding to them: re-asking for something settled above the seam is correct
+    behaviour rather than `confusion`, a constraint stated above it was lost rather than
+    disregarded, and a mismatch with earlier material is amnesia rather than contradiction.
+    A judge that cannot see the seam scores all three as degradation, which is the exact
+    false positive this plugin exists to avoid.
+
+    And it pays: the two readings imply **opposite repairs**. Restating the constraint
+    fixes a compaction loss; starting a fresh chat does not — it is the one degradation-
+    shaped complaint where "start a new conversation" is precisely the wrong advice.
+    """
+    rows = []
+    for c in sess.compactions:
+        # `None`, not 0, when there is no response on one side of the seam — a manual
+        # `/compact` as the last thing that happened has nothing after it, and a zero there
+        # reads as "the context dropped to nothing" rather than "this was not measured".
+        before = sess.steps[c.step - 1].depth if 0 < c.step <= len(sess.steps) else None
+        after = sess.steps[c.step].depth if c.step < len(sess.steps) else None
+        rows.append({
+            "trigger": c.trigger,
+            "pre_tokens": c.pre_tokens,
+            "depth_before": before,
+            "depth_after": after,
+            "summary_chars": c.summary_chars,
+            "preserved_messages": c.preserved,
+            "turn": c.turn,
+        })
+
+    warnings = []
+    if rows:
+        where = ", ".join(f"{r['trigger']} at {r['pre_tokens']:,} tok" for r in rows)
+        warnings.append(
+            f"the conversation was compacted {len(rows)}x ({where}): above each seam the "
+            f"assistant holds a summary, not the text. Re-asking for something settled "
+            f"above a seam is correct behaviour rather than confusion, and a constraint "
+            f"stated above one was lost rather than ignored — restating it repairs that, "
+            f"and starting a fresh chat does not"
+        )
+    return {
+        "fired": bool(rows),
+        "count": len(rows),
+        "seams": rows,
+        "warnings": warnings,
+        "summary": "; ".join(warnings) or "no compaction",
+    }
+
+
 def continuity(sess: Session) -> dict:
     """Was the whole transcript read, or is every count above computed on a fragment?
 
@@ -669,9 +727,11 @@ def continuity(sess: Session) -> dict:
     this tool creates about its own read. It reports magnitude rather than a boolean
     because "truncated" with no number invites the reader to assume it was marginal.
 
-    A **compaction** clause lived here too, and was cut for lack of evidence rather
-    than lack of value — the mechanism is real and the reasoning about it is preserved
-    in the roadmap. Nothing detects it today, so nothing claims to.
+    A **compaction** clause lived here too and was cut for lack of evidence. It now has
+    its own check next door, on the same reasoning that let this one ship: a compacted
+    transcript was deliberately produced, and the seam turned out to be a record the
+    harness writes rather than something to infer. Both are facts about a read, not
+    judgements about a session; keeping them separate keeps their remedies separate.
     """
     dropped_mb = sess.dropped_bytes / (1024 * 1024)
     warnings = []
@@ -692,5 +752,5 @@ def continuity(sess: Session) -> dict:
 __all__ = [
     "dumps", "dump_reason", "partial_use", "rereads", "mutation_index",
     "batching", "spill", "producers", "cli_probes", "grounding", "failures",
-    "continuity",
+    "continuity", "compaction",
 ]
