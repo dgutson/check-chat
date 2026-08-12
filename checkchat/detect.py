@@ -173,7 +173,16 @@ def partial_use(sess: Session) -> list[dict]:
                     break
             elif later.tool == "Bash":
                 cmd = _cmd_of(later)
-                if base and base in cmd and _WINDOWED_CMD.search(cmd):
+                # Shell code, never the whole command: a commit message naming the file, or
+                # an `echo "=== reading SKILL.md ==="`, mentions it without searching it.
+                # Item 13 built `_shell_code` for this and applied it to `cli_probes` alone;
+                # the identical hole sat here in the *proof* tier, where the consequence is
+                # worse — 6 of 48 proofs on the corpus were a file's name appearing in data,
+                # reported as machine-checkable evidence of waste. Item 21 printed them, which
+                # is how anyone saw it. Losing a quoted filename argument is the acceptable
+                # direction: a missed proof costs recall, a false one costs the tier its word.
+                code = _shell_code(cmd)
+                if base and base in code and _WINDOWED_CMD.search(code):
                     out.append(_proof(c, path, later, f"later `{cmd.strip()[:70]}` searched it"))
                     break
     out.sort(key=lambda r: r["chars"], reverse=True)

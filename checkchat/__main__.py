@@ -97,6 +97,24 @@ TEXT_OMITS = {
 }
 
 
+def _block(mark: str, r: dict) -> list[str]:
+    """A check's line, and — when it fired — the evidence a reporter is required to quote.
+
+    Item 21: `SKILL.md` demands that an `evidenced` finding be reported "with the specifics
+    quoted" and that the build-this prompt name the actual command, while the only thing the
+    skill was handed was this one line. The rows are printed here, beside the number they
+    belong to, rather than in a file the skill has to be told to open — a second artifact is
+    a second thing to forget, and this one is small enough to travel with the summary.
+
+    Only a fired check shows them. An unfired check's rows are context nobody asked for, and
+    printing every ranked payload on a clean session would bury the four lines that matter.
+    """
+    out = [f"{mark} {r['line']}"]
+    if r.get("fired"):
+        out += [f"    - {row}" for row in (r.get("specifics") or [])]
+    return out
+
+
 def _text(d: dict) -> str:
     if "error" in d:
         # The hint is the whole actionable half — "pass --session <id>" is the fix for the
@@ -134,7 +152,7 @@ def _text(d: dict) -> str:
     hoisted = [n for n, r in d["checks"].items()
                if r.get("evidence") == "caveat" and r.get("fired") and r.get("line")]
     for name in hoisted:
-        lines.append(f"! {d['checks'][name]['line']}")
+        lines += _block("!", d["checks"][name])
 
     # Dimensions come from the registry, never a literal list here: a hardcoded one
     # silently drops any check registered under a dimension nobody remembered to add.
@@ -143,8 +161,7 @@ def _text(d: dict) -> str:
     for dim in sorted(seen, key=lambda x: (order.get(x, 99), x)):
         for name, r in d["checks"].items():
             if r.get("dimension") == dim and r.get("line") and name not in hoisted:
-                mark = "*" if r.get("fired") else " "
-                lines.append(f"{mark} {r['line']}")
+                lines += _block("*" if r.get("fired") else " ", r)
     fired = d.get("fired") or []
     lines.append(f"\nfired: {', '.join(fired) if fired else 'nothing'}")
 

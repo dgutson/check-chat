@@ -156,6 +156,39 @@ def test_partial_use_proves_the_dump_was_unnecessary(tmp_path):
     assert len(proofs) == 1 and proofs[0]["path"] == "/big.py"
 
 
+def test_a_file_merely_named_in_a_command_was_not_searched(tmp_path):
+    """`partial_use` is the one `proof`-tier check — "carries its own ground truth", "lead
+    with it" — and it matched the **whole** Bash command, so a commit message naming the file
+    counted as a windowed search of it. Item 13 built `_shell_code` for precisely this failure
+    and applied it to `cli_probes` alone; the identical hole sat here, where the consequence is
+    worse, because this is the finding the report leads with.
+
+    6 of 48 proofs on the corpus were a filename appearing in data. None of them was visible
+    while the check reported a count — item 21 printed the evidence, and the second row of the
+    first real session read `git commit -F - <<'EOF' hedge the judge's 1s…`.
+    """
+    dump = [
+        _human("read it"),
+        _asst("", calls=[("t1", "Read", {"file_path": "/repo/SKILL.md"})]),
+        _result("t1", "s" * 9000),
+    ]
+    for i, mention in enumerate((
+        "git commit -F - <<'EOF'\nfix the grep in SKILL.md\nEOF",     # a heredoc body
+        'echo "=== about to grep SKILL.md ==="',                     # a quoted label
+        'grep -n "SKILL.md" other.md',                               # the name as the needle
+    )):
+        recs = dump + [_asst("", calls=[(f"m{i}", "Bash", {"command": mention})], req=f"r{i}"),
+                       _result(f"m{i}", "ok")]
+        sess = transcript.load(write(tmp_path, recs, name=f"prose{i}.jsonl"))
+        assert detect.partial_use(sess) == [], f"a file named in data was not searched: {mention!r}"
+
+    recs = dump + [_asst("", calls=[("t9", "Bash", {"command": "grep -n parse /repo/SKILL.md"})],
+                         req="r9"), _result("t9", "42: def parse")]
+    rows = detect.partial_use(transcript.load(write(tmp_path, recs, name="real.jsonl")))
+    assert len(rows) == 1 and rows[0]["path"] == "/repo/SKILL.md", \
+        "and the real search still proves the dump — the fix must cost recall it does not owe"
+
+
 def test_reread_after_edit_is_not_waste(tmp_path):
     """The naive rule overstates waste by two thirds; re-grounding after an edit is correct."""
     edited = transcript.load(write(tmp_path, [
@@ -1083,6 +1116,186 @@ def test_a_judged_candidate_is_the_headline_and_reaches_the_skill(tmp_path):
     })
     text = verdict.render(verdict.check(reply))
     assert "candidate_verdicts: 2 judged, 1 sycophancy" in text
+
+
+# ------------------------------------------- the evidence a reporter has to quote
+#
+# Item 21, and it is kind 4 of the defect list: every number was right, every line was
+# printed, and the *consumer* was never given what its own rules require. `SKILL.md` says an
+# `evidenced` finding is reported "with the specifics quoted" and that the build-this prompt
+# fires only on the actual file and the actual command — while the skill was handed one
+# summary line per check and told, three sections earlier, never to read the raw JSON.
+#
+# So a check now returns `specifics`: rows a person can quote verbatim. The tier decides who
+# must have them, which is why no list of check names appears below.
+
+_MUST_QUOTE = ("proof", "evidenced")
+
+
+def _fires(tmp_path, records, name):
+    return checks.run(checks.Context(session=transcript.load(write(tmp_path, records, name))))
+
+
+_PARTIAL_USE_RECORDS = [
+    _human("what does it do"),
+    _asst("", calls=[("t1", "Read", {"file_path": "/repo/big.py"})]),
+    _result("t1", "y" * 9000),
+    # The proof is a *later windowed read of the same file*, which is what makes the first
+    # one demonstrably a dump. A grep is not: it may be searching for something new.
+    _asst("", calls=[("t2", "Read", {"file_path": "/repo/big.py", "offset": 400, "limit": 20})],
+          req="r2"),
+    _result("t2", "y" * 100),
+    _asst("it parses", req="r3"),
+]
+
+
+def _partial_use_session(tmp_path):
+    """A whole-file read the session later proved it needed twenty lines of."""
+    return _fires(tmp_path, _PARTIAL_USE_RECORDS, "pu.jsonl")
+
+
+def _reread_session(tmp_path):
+    calls = []
+    for i in range(1, 5):
+        calls += [_asst("", calls=[(f"t{i}", "Read", {"file_path": "/repo/a.py"})], req=f"r{i}"),
+                  _result(f"t{i}", "z" * 100)]
+    return _fires(tmp_path, [_human("go"), *calls], "rr21.jsonl")
+
+
+def _spill_session(tmp_path):
+    return _fires(tmp_path, [
+        _human("run it"),
+        _asst("", calls=[("t1", "Bash", {"command": "./dump.sh"})]),
+        _result("t1", "Output too large, saved to: /tmp/tool-results/out.txt\n" + "k" * 2000),
+        _asst("", calls=[("t2", "Read", {"file_path": "/tmp/tool-results/out.txt"})], req="r2"),
+        _result("t2", "m" * 60000),
+        _asst("done", req="r3"),
+    ], "sp21.jsonl")
+
+
+def _specification_session(tmp_path):
+    recs = [_human("make it better"), _asst("Here are some thoughts. " + "w " * 400)]
+    for i in range(2):
+        recs += [_human("and improve the design"), _asst("More thoughts. " + "v " * 400,
+                                                         req=f"r{i}")]
+    return _fires(tmp_path, recs, "spec21.jsonl")
+
+
+def _producers_session(tmp_path):
+    """The flagship dimension-3 case: one expensive producer re-filtered four ways."""
+    recs = [_human("find the strings")]
+    for i in range(4):
+        recs += [_asst("", calls=[(f"w{i}", "Bash",
+                                   {"command": f"strings big.bin 2>/dev/null | grep pattern{i}"})],
+                       req=f"w{i}"), _result(f"w{i}", "x" * 500)]
+    return _fires(tmp_path, recs, "prod21.jsonl")
+
+
+def _sycophancy_session(tmp_path):
+    return _fires(tmp_path, [
+        _human("should we cache it?"),
+        _asst("No — the cache would be colder than the source. " + "argument " * 60),
+        _human("Are you sure? I think you're wrong."),
+        _asst("You're right, I apologise — let's cache it.", req="r2"),
+    ], "sy21.jsonl")
+
+
+FIRED_BY_FIXTURE = {
+    "partial_use": _partial_use_session, "rereads": _reread_session,
+    "spill": _spill_session, "specification": _specification_session,
+    "sycophancy": _sycophancy_session, "producers": _producers_session,
+}
+
+
+def test_a_check_that_must_be_quoted_supplies_something_to_quote(tmp_path):
+    """The invariant, keyed on the tier and not on a list of names.
+
+    Every `proof` or `evidenced` check that fires here yields rows, so the skill's rule can
+    be obeyed from the summary it is told to read. A new check at either tier joins this
+    test by being registered — it fails until a fixture fires it, which is the point: a tier
+    that promises specifics and cannot produce any is a promise the reporting step keeps by
+    inventing them."""
+    covered = {n for n, c in checks.REGISTRY.items() if c.evidence in _MUST_QUOTE}
+    assert covered <= set(FIRED_BY_FIXTURE), (
+        f"no fixture fires {covered - set(FIRED_BY_FIXTURE)} — add one, and do not add an "
+        f"exemption instead: a tier that promises specifics is what most needs the proof")
+
+    for name, fixture in FIRED_BY_FIXTURE.items():
+        r = fixture(tmp_path)[name]
+        assert r["fired"], f"{name} fixture no longer fires it; the test proves nothing"
+        assert r["specifics"], f"{name} is {r['evidence']} tier, fired, and gave nothing to quote"
+
+
+def test_the_rows_name_the_thing_the_report_has_to_point_at(tmp_path):
+    """Rows exist is not rows are useful. Each must carry the identifier a reader acts on —
+    the file that was dumped, the file re-read, the command whose output came back."""
+    assert "/repo/big.py" in _partial_use_session(tmp_path)["partial_use"]["specifics"][0]
+    assert "/repo/a.py" in _reread_session(tmp_path)["rereads"]["specifics"][0]
+    assert "/tmp/tool-results/out.txt" in _spill_session(tmp_path)["spill"]["specifics"][0]
+    assert "make it better" in " ".join(_specification_session(tmp_path)["specification"]
+                                        ["specifics"])
+    row = _producers_session(tmp_path)["producers"]["specifics"][0]
+    assert "strings big.bin" in row and "run 4x" in row, \
+        "the build-this prompt is written from this row, so it must carry the command"
+
+
+def test_a_sycophancy_candidate_is_not_offered_as_a_finding(tmp_path):
+    """The one `proof` check whose evidence must not be quoted. Its rows point at the file
+    the judge reads and say what a candidate is not — otherwise a pre-pass built to
+    over-select becomes a report full of findings nobody ruled on."""
+    rows = _sycophancy_session(tmp_path)["sycophancy"]["specifics"]
+    assert len(rows) == 1 and "candidates.txt" in rows[0]
+    assert "not a finding until the judge" in rows[0]
+    assert "You're right, I apologise" not in " ".join(rows), \
+        "the candidate's own text must not travel as evidence of anything"
+
+
+def test_the_cap_states_what_it_cut(tmp_path):
+    """A silent truncation reads as "that was all of it" — the confident total this project
+    exists to prevent, and `LEDGER_ROWS` already sets the form the statement takes."""
+    rows = checks.evidence_rows([f"row {i}" for i in range(9)])
+    assert len(rows) == checks.SPECIFIC_ROWS + 1
+    assert rows[-1] == f"(+{9 - checks.SPECIFIC_ROWS} more, all of them in the JSON)"
+    assert checks.evidence_rows([f"row {i}" for i in range(checks.SPECIFIC_ROWS)])[-1] \
+        == f"row {checks.SPECIFIC_ROWS - 1}", "no cut, no claim about a cut"
+
+    long_row = "x" * (checks.SPECIFIC_WIDTH * 2)
+    assert len(checks.evidence_rows([long_row])[0]) == checks.SPECIFIC_WIDTH
+    assert checks.evidence_rows([long_row])[0].endswith("…"), "a trimmed row says it was trimmed"
+    assert checks.evidence_rows(["a\nb", "  ", None]) == ["a b"], \
+        "one row is one line, and an empty row is not a row"
+
+
+def test_the_rows_reach_the_renderer_under_the_check_they_belong_to(tmp_path, monkeypatch):
+    """Item 19's seam, applied to item 21's data before it has a chance to leak: computing
+    quotable evidence that never reaches `--text` would be this defect with an extra step."""
+    d = _collected(tmp_path, monkeypatch, records=_PARTIAL_USE_RECORDS, name="render21.jsonl")
+    body = cli._text(d).splitlines()
+
+    assert d["checks"]["partial_use"]["fired"], "the fixture is the point of the test"
+    at = next(i for i, ln in enumerate(body) if ln.lstrip("*! ").startswith("partial"))
+    assert body[at + 1].startswith("    - "), "the rows sit under the line they belong to"
+    for row in d["checks"]["partial_use"]["specifics"]:
+        assert f"    - {row}" in body, "every row computed is a row printed"
+
+
+def test_an_unfired_check_keeps_its_rows_to_itself(tmp_path, monkeypatch):
+    """The negative control, and it only means something on a check that **has** rows and
+    still did not fire — two reads of one file is one repeat, below `REREAD_MIN`. Written
+    first against a session with no rows at all, where it passed with the guard deleted:
+    printing evidence for a finding nobody made would bury the lines that matter, and a
+    control that cannot see that is worse than none."""
+    d = _collected(tmp_path, monkeypatch, records=[
+        _human("go"),
+        _asst("", calls=[("t1", "Read", {"file_path": "/repo/a.py"})]),
+        _result("t1", "x" * 100),
+        _asst("", calls=[("t2", "Read", {"file_path": "/repo/a.py"})], req="r2"),
+        _result("t2", "x" * 100),
+    ], name="quiet21.jsonl")
+
+    r = d["checks"]["rereads"]
+    assert r["specifics"] and not r["fired"], "rows without a finding — the case that matters"
+    assert not [ln for ln in cli._text(d).splitlines() if ln.startswith("    - ")]
 
 
 # ------------------------------------------------------------------ blinding

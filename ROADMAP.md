@@ -6,7 +6,7 @@ pick it up.
 The plugin is **installed and working end-to-end** on this machine: `/check-chat` runs,
 the deterministic pass takes ~280ms (~86ms of it before item 4 made the cross-session
 comparison actually load other sessions; `--siblings 0` returns it to ~20ms), the judge
-dispatches by `subagent_type`, and the report comes back. 105 tests pass, in the project's
+dispatches by `subagent_type`, and the report comes back. 112 tests pass, in the project's
 **own** virtualenv (`.venv/bin/pytest` from the repo root). What follows is what is not
 done, ordered by whether it blocks someone other than the author.
 
@@ -715,38 +715,112 @@ reach the payload *inside* a check — `proofs`, `groups`, `events`, `recurring`
 where the specifics the skill is required to quote actually live. That is item 21, and it was
 found by this mechanism rather than by reading this list.
 
+**21. A check's specifics reach the person who has to quote them** — `specifics`
+(2026-08-12). The skill is *required* to report an `evidenced` finding "with the specifics
+quoted", and the build-this prompt fires only on "the actual command run 15 times, the actual
+file dumped and later grepped". Those specifics existed — `partial_use.proofs`,
+`producers.groups`, `spill.events` — and the skill was handed one summary line per check and
+told, three sections earlier, never to read the raw JSON, because the excerpt rides along with
+it. A rule and its evidence on opposite sides of a wall the tool built on purpose.
+
+*Why this was the worst of the four rather than the smallest.* Every other leak cost a reader
+a fact. This one left three ways out and all of them are bad: re-run without `--emit` and drag
+the excerpt into the session under diagnosis, report vaguely and break the rule, or fill the
+gap with plausible specifics — which is precisely the fabrication `verdict.py` exists to catch
+on the judge's side, where nothing catches it on the skill's.
+
+*The shape follows item 20's split.* A check returns `specifics`: rows a person can quote,
+built by the check because only the check knows its payload. The registry caps them and states
+the cut; `--text` prints them under the line they belong to, **only when the check fired**.
+No new file: a second artifact is a second thing to forget, and the measurement said this one
+travels with the summary for free.
+
+*Measured before it shipped, over the whole corpus — 300 transcript files, 63 of them sessions
+with both a response and a human turn* (235 hold no assistant response at all, which is worth
+knowing before anyone sizes a sweep by file count again):
+
+| measurement | result |
+|---|---|
+| chars added to `--text` | median **167**, p95 1,207, max **1,750** (~440 tokens worst case) |
+| sessions gaining any row | 44 of 63 (70%) |
+| `dumps` fired / rows cut by the cap | 36 / 20 — the cap is load-bearing, and every cut is stated |
+| `partial_use` fired / cut | 21 / 4 |
+| `producers`, `spill` fired | 1 each, at 2 and 1 rows — the rare, proof-grade findings |
+
+*One thing this item was filed on turned out to be false, and the correction matters more than
+the item.* It said the payloads are unbounded and `dumps` "can carry every large call". They
+are not: `detect.dumps` takes `top=5`, `specification` slices `[:5]`, `rereads` and
+`cli_probes` likewise — **the detectors were already capped upstream and nobody had said so.**
+Only `producers`, `spill` and `partial_use` return uncapped lists, and their measured maxima
+are 2, 1 and 6. So `SPECIFIC_ROWS = 3` is not protection against an unbounded payload; it is a
+choice to show the reader enough to quote and no more, and it is defensible only because the
+cut is printed. Written down because the worry that justified the measurement was wrong, and
+the measurement is what says so.
+
+*The invariant is keyed on the tier, not on a list of names.* Every `proof` or `evidenced`
+check that fires must yield rows, tested through a fixture per check — and the one exception
+proves the rule rather than escaping it: `sycophancy` is `proof` tier and its rows deliberately
+carry **no** candidate text, saying instead where the judge's copy is and that a candidate is
+not a finding. A pre-pass built to over-select must not become a report full of findings nobody
+ruled on.
+
+*And then the rows were read, which is the part that paid.* The first real session rendered
+with them showed `partial` — the `proof` tier, the finding the report **leads with** — citing
+`git commit -F - <<'EOF' hedge the judge's 1s…` as evidence that `SKILL.md` had been read whole
+and later only searched. A commit message that names a file is not a search of it. The Bash
+branch of `partial_use` matched the **whole command**, so any mention of the basename beside
+any `grep` anywhere counted: **6 of 48 proofs on the corpus were a filename appearing in
+data.** Item 13 built `_shell_code` for exactly this failure and applied it to `cli_probes`
+alone; the identical hole sat in the tier whose whole claim is that it carries its own ground
+truth. Fixed by matching shell code, which drops 48 proofs to 42 and keeps every real one, and
+the direction is the safe one — a missed proof costs recall, a false proof costs the tier its
+word. 1 test, mutation-checked.
+
+*Note what found it.* Not a walk, not the roadmap, and not a review of `detect.py`: **the
+evidence was printed next to the number and a person read it.** The count "2 dumps later
+proved to need only a slice" was unfalsifiable at a glance and had been shipping for weeks;
+one of the two rows underneath it was self-evidently not a proof. That is the strongest
+argument for item 21 that exists, and it was not the argument the item was filed on — showing
+your evidence is a *correctness* mechanism, not only a reporting nicety, because a number
+nobody can check is a number nobody checks.
+
+8 mutations, each watched to fail — 2 only after being corrected, and both corrections are
+recorded under "ways to get a false answer". The `None` case was found by the tests rather than
+by review: `str(None)` is `"None"`, so a `None` row printed as a line of evidence reading
+*None* under a finding. 7 tests, 112 total.
+
 ---
 
-## Now — the seam again, one level in, where the quoted evidence lives
+## Now — the rules and the artifacts, which is the pair nothing checks
 
-**21. The specifics a check computes have no path to the person who must quote them.**
-Found by item 19's walk the day it was built, and it is the same seam one level in. The skill
-is *required* to report an `evidenced` finding "with the specifics quoted", and dimension 3's
-build-this prompt fires only on "the actual command run 15 times, the actual file dumped and
-later grepped". Those specifics exist — `partial_use.proofs`, `producers.groups`,
-`spill.events`, `cli_probes.recurring` — and **the skill is never handed any of them.** It
-gets one summary line per check from `--emit`, and it is told in the same file not to read the
-raw JSON, because the excerpt rides along with it.
-- *Why this is the worst instance of the four, not the smallest:* every other leak cost a
-  reader a fact. This one puts a rule and its evidence on opposite sides of a wall, so the
-  three ways out are all bad — re-run without `--emit` and drag the excerpt into the session
-  under diagnosis, report vaguely and violate the rule, or fill the gap with plausible
-  specifics, which is the exact failure `verdict.py` exists to catch on the judge's side.
-- *Half of dimension 3 already has a path, and it is the model's half:* item 14's ledger sits
-  inside the excerpt, so a `wasted_effort` finding can quote a real row. The deterministic
-  half — the part with proof-grade evidence — has nothing.
-- *What to build, and the design decision is real:* an `--emit` file carrying the fired
-  checks' payloads is the obvious shape, and it needs a measurement first, because the
-  payloads are unbounded (`dumps` alone can carry every large call). **Measure what they cost
-  on the corpus before printing any of them**, cap what needs capping, and state the cap in
-  the output the way `LEDGER_ROWS` does rather than truncating silently.
-- *How you would know it is finished:* a dimension-3 report quotes a filename and a command
-  the Python found, and the session never held the excerpt to do it.
+**22. Audit every rule in `SKILL.md` against the artifact that has to satisfy it, and then
+mechanise the audit.** Kind 4 is found only by pairing a *requirement* with the *data that
+would meet it*, and that question has now been asked exactly twice — of `capabilities`
+("is plugin-finder installed?" was a branch with no input) and of the quoting rule (item 21).
+It found a defect **both times**. There is no reason to think the third asking is different,
+and the skill is 460 lines of rules.
+- *What to build, and the second half is the point:* first the pass by hand, rule by rule,
+  asking what datum each needs and whether it arrives in the artifact the skill is told to
+  read. Then the mechanism — **a test that walks `SKILL.md` for the fields it names in
+  backticks (`capabilities.plugin_finder`, `checks.<name>.specifics`, `dropped_bytes`,
+  `warnings`) and asserts each one exists in a real `collect()` output.** That closes kind 4
+  the way item 19's walks closed kind 3: the document and the data stop drifting silently.
+- *Why the mechanism is worth more than the pass:* the pass finds today's defects, and every
+  edit to either side can reintroduce one. `SKILL.md` is the only file here that is *prose
+  about data*, so it is the only one where a rename in `collect()` breaks a reader with no
+  error anywhere.
+- *The known limit, stated up front:* a walk can check that a named field **exists**, never
+  that the rule's *meaning* is satisfied. "Quote the caveat's warnings rather than
+  paraphrasing" is checkable; "report only what fired" is not. Expect the mechanism to cover
+  the references and leave the reasoning to the pass.
+- *How you would know it is finished:* renaming a field in `collect()` fails a test that names
+  `SKILL.md`, rather than being discovered by a skill quietly reporting nothing.
 
 Everything else is unchanged. Every check has been audited for item 4's failure (item 12),
 item 8 shipped as item 14, item 10 shipped by manufacturing the input it was waiting for, and
-items 19 and 20 shipped as one seam. What remains beyond item 21 is items 6, 7 and 9, blocked
-on transcripts from a *different user* — the one kind of input that cannot be manufactured,
+items 19 and 20 shipped as one seam, and item 21 with them. What remains beyond item 22 is
+items 6, 7 and 9, blocked on transcripts from a *different user* — the one kind of input that
+cannot be manufactured,
 and worth contrasting with item 10, whose blocker was misfiled as a wait for a year's worth of
 luck when it was twenty minutes of work. Read item 12's rule before touching any of them,
 item 13 before trusting a corpus sweep, and item 14 before adding anything else to the
@@ -784,19 +858,30 @@ downstream — so when this heading next reads "nothing", the question to ask is
 check wrong" but "does anything verify what happens to a check's output after it is right".
 
 **The prediction held, and a fourth kind arrived with it.** Item 19's walks were built for
-kind 3 and found four instances of it in an hour. Item 21 is the fourth kind and does not fit
-any of the three:
+kind 3 and found four instances of it in an hour. Item 21 was the fourth kind and fits none of
+the three:
 
 4. **Everything was right, was presented correctly, and the *consumer* was never given it** —
-   item 21, and `capabilities` was the same shape caught early. The number is computed, the
-   line is printed, and the rule that needs it lives in a document on the other side of a
+   item 21, with `capabilities` the same shape caught an hour earlier. The number is computed,
+   the line is printed, and the rule that needs it lives in a document on the other side of a
    wall the tool built on purpose. No renderer is wrong; there is no renderer at all.
 
-Kind 4 is the one a walk finds cheaply and a reading never does, because the defect is not in
-any file you would open — it is between `SKILL.md`'s requirements and `collect()`'s output,
-and only enumerating one against the other shows it. **The generalisation is to ask, of every
-rule the skill is given, which artifact carries the evidence that rule demands.** That
-question has now been asked once, of one document, and it found item 21 immediately.
+Kind 4 is the one a reading never finds, because the defect is in no file you would open — it
+is *between* `SKILL.md`'s requirements and `collect()`'s output, and only enumerating one
+against the other shows it. **The generalisation is to ask, of every rule the skill is given,
+which artifact carries the evidence that rule demands.** Asked twice so far, and a defect both
+times, which is why item 22 is to ask it of all of them and then leave a test behind that
+keeps asking.
+
+**The four kinds are one shape, and naming it is what this list is for.** In every case a
+number was correct and the *distance between where it was computed and where it was needed*
+was never checked by anything. Kind 1 is a wrong number and is the only kind the checks
+themselves can catch; kinds 2, 3 and 4 are the same defect at increasing distance — excerpt,
+renderer, consumer. So the useful question when this heading next reads "nothing" is not "is
+any check wrong", and no longer only "does anything verify what happens to a check's output
+after it is right", but **"how far does a number travel before someone acts on it, and what
+checks each hop?"** Three of those hops now have a walk. The last one ends in prose that a
+model reads, and that is where the mechanism runs out.
 
 ---
 
@@ -916,10 +1001,29 @@ replacement against, which is what disqualifies it.
   computes is rendered by default** — not only checks, and `--text` is not the only renderer,
   since a judge reply reaches a person through `verdict.render`. Item 19 mechanised it in the
   only form that survives being forgotten: a walk over the producer, and a declaration naming
-  the renderer for anything deliberately unprinted. What the walks do **not** reach is a
-  check's payload, which is item 21 — so the question "which renderer does a person read
-  *this* data in" is still the one to ask by hand, and it is now only worth asking about data
-  no walk enumerates.
+  the renderer for anything deliberately unprinted. Item 21 extended it to a check's payload,
+  which now prints under the check that found it. What no walk reaches is the last hop —
+  `SKILL.md`'s prose and the report a model writes from it — so "which renderer does a person
+  read *this* data in" is still asked by hand there, and item 22 is how far a test can follow.
+- **Every check that reads a Bash command has to mean the code, not the text — and the two
+  that got it wrong were found a month apart.** `cli_probes` (item 13) and `partial_use`
+  (found by item 21) both scanned the whole `command` parameter, so a commit message or an
+  `echo` label counted as a command that ran or a file that was searched. Both now match
+  `_shell_code`. The rest were audited when the second one turned up, and the useful part is
+  **which direction each error goes**, because that is what decides whether it matters:
+  `mutation_index` and `_FILTERED` over-match into data and thereby *suppress* a waste
+  finding, which is the safe direction and deliberate; `_DUMPY_CMD` can mislabel *why* a
+  payload was a dump but cannot invent the payload, since the size is measured from the
+  result. The one left unmeasured is `producers`, which groups on the command head: three
+  near-identical mentions of a command would have to appear in data to fool it. **When a
+  check reads command text, say which direction its errors go.** A check that can only
+  suppress needs no fix; one that can invent belongs in the `proof` tier's audit.
+- **`partial_use` now misses a proof whose filename is quoted.** `grep -n foo "my file.md"`
+  loses the basename with the quotes, so the dump goes unproven. Accepted knowingly as the
+  price of the fix above: this is the one check whose tier claims machine-checkable ground
+  truth, so recall is the thing it is allowed to lose. Unmeasured on the corpus — no
+  quoted-path proof appeared in the 48 examined, but that is a small sample of one user's
+  quoting habits.
 - **A declared omission is a hole the mechanism cannot see into.** `cli.TEXT_OMITS` is what
   keeps the walk honest, and it is also the way to silence it: an entry there ends the test's
   interest in a key permanently. The guards are thin on purpose — the reason must be non-empty
@@ -1064,6 +1168,25 @@ Each cost a full re-run to discover, so they are recorded here rather than relea
   deliberately removed to see the test fail; nothing about the green run looked wrong. When an
   assertion says "X appears in Y", ask what *else* in Y could produce that appearance —
   and prefer comparing a field to comparing a haystack, which is what fixed it.
+- **A truncated echo of a value is not the value.** The first attempt to size the
+  `partial_use` false positives re-ran the match against `proof`, which stores
+  `cmd.strip()[:70]` — so real greps failed the re-check for want of the characters the
+  display had cut, and the sweep reported **28 of 37** bad where the truth was 6 of 48.
+  Nothing looked wrong: a plausible number arrived on the first run. This is "measure the
+  shipping function, never a model of it" with the model being *the tool's own rendering of
+  the input*, which is the easiest one to reach for and the last one to suspect.
+- **A negative control on an input that cannot show the effect proves nothing.** Item 21's
+  control asserted that an *unfired* check keeps its rows out of `--text`, on a two-line
+  session — where the check had **no rows to print either way**, so it passed with the guard
+  deleted. Rewritten against two reads of one file: one repeat, below `REREAD_MIN`, so
+  `rereads` has a row and no finding, which is the only state that can tell the guard from its
+  absence. Before writing a control, name the state in which the wrong behaviour would be
+  *visible*, and build that.
+- **A duplicate key in a mutated dict literal mutates nothing.** Injecting `"specifics": []`
+  ahead of the real key left the real one last, so Python kept it and the test passed —
+  reported as "the invariant is not enforced" when the code under test had not changed at all.
+  Same family as the entry below: when a mutation does not fail, suspect the mutation before
+  the test, and confirm the mutated code actually differs.
 - **A mutation that errors is not a mutation that failed.** Breaking `Verdict` to prove the
   field-walk catches a new field produced `1 error` at collection time, not `1 failed` —
   the injected line had a literal `\n` in it and the module would not parse, so *every* test

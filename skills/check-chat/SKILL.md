@@ -181,6 +181,34 @@ check's `dimension`, and let its `evidence` field decide how loudly you report i
 If a check reports an `error`, say so in one line and carry on — one broken check does
 not invalidate the rest.
 
+### Where the specifics come from — quote these, invent nothing
+
+Three rows in that table demand evidence you have to *have*: `proof` leads with it,
+`evidenced` reports "with the specifics quoted", and the build-this prompt below fires
+only on the actual file and the actual command. Step 1 prints them, indented under each
+fired check:
+
+```
+* partial    1 dumps later proved to need only a slice
+    - /repo/ROADMAP.md — 43,600 chars read whole at turn 0; later `grep -n compaction` searched it
+```
+
+**Quote those rows verbatim.** They are the same strings in `checks.<name>.specifics` in
+the JSON, so there is nothing to re-derive and no reason to open the transcript — which
+you were told in step 1 never to do.
+
+Three rules, and the third is the one that costs you if you miss it:
+
+- A row ending `(+N more, all of them in the JSON)` means you were shown a **sample**.
+  Never report the rows you can see as if they were the whole set.
+- `sycophancy` is `proof` tier and its row is deliberately *not* evidence: a candidate is
+  a located exchange, not a finding, and the judge rules on it. Never quote a candidate as
+  a finding of your own.
+- A fired check with **no** rows means the tool captured no quotable specifics for it.
+  Report the finding from its line and say the specifics were not captured. Do **not**
+  supply your own — a plausible filename you reconstructed is exactly the fabrication
+  `--verdict` catches on the judge's side, and nothing catches it on yours.
+
 ### A judge score of `1` is one read
 
 The judge is dispatched once, and a single-dispatch `1` was measured to be **not
@@ -414,6 +442,11 @@ Then say in one line what you expect it to fix, so the user can tell whether it 
 Only when dimension 3 fired with **specific, quoted evidence** — the actual command
 run 15 times, the actual file dumped and later grepped. "You could automate things"
 is noise.
+
+That evidence is the indented rows under the fired check, and `cli` carries the strongest
+one: its row names the command family whose syntax was re-derived here *and* in other
+sessions on this machine, which is the case for a skill rather than a note to self. If the
+rows are not there, the evidence is not there, and this section does not apply.
 
 **Check it doesn't already exist first.** In this order:
 

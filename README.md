@@ -135,11 +135,18 @@ def _my_check(ctx):                       # ctx.session; ctx.others = other sess
                                           # to those containing `--help` (see ROADMAP)
     hits = [c for c in ctx.session.calls if ...]
     return {"fired": bool(hits), "hits": hits,
-            "summary": f"{len(hits)} occurrences"}   # the sentence, without the label
+            "summary": f"{len(hits)} occurrences",   # the sentence, without the label
+            "specifics": [f"{h.target} — {h.chars:,} chars" for h in hits]}
 ```
 
 Import it from `checks.py` and it appears in `--catalog`, in the JSON, and in the
 report automatically.
+
+**`specifics` is what the report is allowed to quote**, printed under the check's line
+when it fires — the actual file, the actual command. A check at `proof` or `evidenced`
+tier **must** supply them: the skill is required to report those findings with their
+specifics quoted, and a tier that promises evidence it cannot produce is a promise the
+reporting step keeps by inventing one. The registry caps the rows and states the cut.
 
 **`summary` is the sentence; the label column is the registry's.** Pass `label=` only
 to print under a different word than the name — `cli_probes` prints as `cli` — and it

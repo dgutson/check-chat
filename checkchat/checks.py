@@ -45,6 +45,14 @@ A check that returns no `summary` at all says so in its line rather than vanishi
 the report: `--text` prints only the lines it is given, so no line means no print, and
 that is how a correctly computed finding has been lost on the way out seven times.
 
+It may also return `specifics` — the rows a reporter is allowed to *quote*: the file that
+was dumped, the command that was re-run. A check at `proof` or `evidenced` tier must
+supply them when it fires, because the skill is required to report those findings with
+their specifics quoted and had no way to obey that until they existed. `evidence_rows`
+caps them and prints what it cut. Showing evidence beside a number turned out to be a
+correctness mechanism rather than a courtesy: the first session rendered this way exposed
+a `proof`-tier false positive that a bare count had hidden for weeks.
+
 If a check raises, it is caught and recorded: one broken check must never take down the
 diagnostic.
 """
@@ -80,6 +88,19 @@ REGISTRY: dict[str, Check] = {}
 # declaring the label was that it is applied in one place.
 LABEL_WIDTH = 10
 
+# How much evidence a fired check may print. The skill is *required* to report an
+# `evidenced` finding with its specifics quoted, and until item 21 it was handed a summary
+# line and nothing else — the rule and its evidence on opposite sides of a wall. So a check
+# may return `specifics`: rows a person can quote verbatim, one per finding.
+#
+# Capped here rather than in each check, and the cap is **stated in the output**: a payload
+# is unbounded (`dumps` alone ranks every large call in the session) and a silent truncation
+# would read as "that was all of it", which is the confident-zero failure this project keeps
+# finding in its own reports. Both numbers were set by measuring the shipping function over
+# 200 real transcripts — see the ROADMAP entry for item 21 for what they cost.
+SPECIFIC_ROWS = 3
+SPECIFIC_WIDTH = 160
+
 
 def register(name: str, dimension: str, question: str, evidence: str = "descriptive",
              label: str | None = None):
@@ -100,6 +121,25 @@ def line(chk: Check, summary: str | None) -> str:
     return f"{chk.label:<{LABEL_WIDTH}} {(summary or '').strip() or 'check returned no summary'}"
 
 
+def evidence_rows(rows) -> list[str]:
+    """Cap a check's quotable evidence, and say so when there was more of it.
+
+    The last row is a statement about the cut rather than a finding, for the same reason
+    `LEDGER_CUT` exists: a reader who cannot see that three of eleven were shown will read
+    three as all of them, and act on a total that is really a sample.
+    """
+    # `str(None)` is `"None"`, which is truthy and would print as a row of evidence. A row
+    # reading "None" under a finding is a fabricated specific, which is the one thing this
+    # path must never produce — so the filter runs before the conversion, not after it.
+    rows = [" ".join(str(r).split()) for r in (rows or []) if r is not None]
+    rows = [r for r in rows if r]
+    shown = [r if len(r) <= SPECIFIC_WIDTH else r[:SPECIFIC_WIDTH - 1] + "…"
+             for r in rows[:SPECIFIC_ROWS]]
+    if len(rows) > SPECIFIC_ROWS:
+        shown.append(f"(+{len(rows) - SPECIFIC_ROWS} more, all of them in the JSON)")
+    return shown
+
+
 def run(ctx: Context) -> dict:
     out: dict[str, dict] = {}
     for name, chk in REGISTRY.items():
@@ -111,7 +151,8 @@ def run(ctx: Context) -> dict:
         result.setdefault("fired", False)
         out[name] = {"dimension": chk.dimension, "evidence": chk.evidence,
                      "label": chk.label, **result,
-                     "line": line(chk, result.get("summary"))}
+                     "line": line(chk, result.get("summary")),
+                     "specifics": evidence_rows(result.get("specifics"))}
         out[name].pop("summary", None)               # it is in `line`; do not ship it twice
     return out
 
@@ -132,7 +173,9 @@ def catalog() -> list[dict]:
 def _partial_use(ctx):
     rows = detect.partial_use(ctx.session)
     return {"fired": bool(rows), "proofs": rows,
-            "summary": f"{len(rows)} dumps later proved to need only a slice"}
+            "summary": f"{len(rows)} dumps later proved to need only a slice",
+            "specifics": [f"{r['path']} — {r['chars']:,} chars read whole at turn {r['turn']}; "
+                          f"{r['proof']}" for r in rows]}
 
 
 @register("dumps", "opportunity", evidence="ranked",
@@ -141,7 +184,12 @@ def _dumps(ctx):
     d = detect.dumps(ctx.session)
     return {"fired": bool(d["count"]), **d,
             "summary": f"{d['count']}/{d['calls_total']} calls carry {d['chars']:,} "
-                       f"chars ({d['share_of_tool_bytes']:.0%} of tool bytes)"}
+                       f"chars ({d['share_of_tool_bytes']:.0%} of tool bytes)",
+            # A `ranked` tier may produce a sorted table and never a verdict, so these rows
+            # are the table: the cost is stated and no row is called waste.
+            "specifics": [f"{r['tool']} {r['target']} — {r['chars']:,} chars carried for "
+                          f"{r['responses_after']} responses ({r['why']})"
+                          for r in d.get("top", [])]}
 
 
 @register("producers", "opportunity", evidence="evidenced",
@@ -149,7 +197,11 @@ def _dumps(ctx):
 def _producers(ctx):
     rows = detect.producers(ctx.session)
     return {"fired": bool(rows), "groups": rows,
-            "summary": f"{len(rows)} re-run >= {detect.PRODUCER_MIN}x on unchanged input"}
+            "summary": f"{len(rows)} re-run >= {detect.PRODUCER_MIN}x on unchanged input",
+            "specifics": [f"`{r['producer']}` — run {r['runs']}x, "
+                          f"{r['reruns_on_unchanged_input']} of them on unchanged input, "
+                          f"differing only after the pipe: {'; '.join(r['variants'][:3])}"
+                          for r in rows]}
 
 
 @register("rereads", "opportunity", evidence="evidenced",
@@ -159,14 +211,21 @@ def _rereads(ctx):
     return {**r, "fired": r["fires"],       # detector says `fires`; the registry reads `fired`
             "summary": f"{r['repeats_without_change']} unchanged "
                        f"(+{r['repeats_after_edit']} legit re-grounding, "
-                       f"+{r['repeats_disjoint_slices']} different slices) = {r['chars']:,} chars"}
+                       f"+{r['repeats_disjoint_slices']} different slices) = {r['chars']:,} chars",
+            "specifics": [f"{f['path']} — read {f['reads']}x, {f['unchanged_repeats']} with "
+                          f"nothing changed in between ({f['chars']:,} chars re-fetched)"
+                          for f in r.get("files", []) if f["unchanged_repeats"]]}
 
 
 @register("spill", "opportunity", evidence="evidenced",
           question="Was a result the harness judged too big to keep read back in anyway?")
 def _spill(ctx):
     rows = detect.spill(ctx.session)
-    return {"fired": bool(rows), "events": rows, "summary": f"{len(rows)} re-ingested"}
+    return {"fired": bool(rows), "events": rows, "summary": f"{len(rows)} re-ingested",
+            "specifics": [f"{r['path']} — {r['read_chars']:,} chars read back in after the "
+                          f"harness kept only {r['kept_chars']:,}"
+                          + (f" ({r['amplification']}x)" if r["amplification"] else "")
+                          for r in rows]}
 
 
 @register("cli_probes", "opportunity", evidence="descriptive", label="cli",
@@ -176,9 +235,15 @@ def _cli(ctx):
     # "other probing sessions", not "other sessions": `ctx.others` is pre-filtered to the
     # transcripts that could match, so reporting it as a share of all sessions would
     # overstate how much history a null result has actually been checked against.
+    recurring = set(c["recurring"])
     return {"fired": bool(c["recurring"]), **c,
             "summary": f"{c['probes']} --help probes, {len(c['recurring'])} recurring "
-                       f"across {c['sessions_compared']} other probing sessions machine-wide"}
+                       f"across {c['sessions_compared']} other probing sessions machine-wide",
+            # The one finding whose remedy is a *skill*, so the command family is the whole
+            # recommendation: "you could automate things" is noise, `gh pr --help` is not.
+            "specifics": [f"`{f['family']}` — syntax re-derived {f['here']}x here and in "
+                          f"{f['other_sessions']} other sessions on this machine"
+                          for f in c.get("families", []) if f["family"] in recurring]}
 
 
 @register("effort", "opportunity", evidence="descriptive",
@@ -213,10 +278,17 @@ def _grounding(ctx):
           question="Did the assistant drop a position under pushback rather than argument?")
 def _sycophancy(ctx):
     r = sycophancy.report(ctx.session)
+    n = len(r["candidates"])
     return {**r, "fired": r["needs_judgment"],
-            "summary": f"{len(r['candidates'])} candidates from {r['interjections']} "
-                       f"interjections "
-                       f"({'ranked' if r['ranking_applied'] else 'unranked, non-English'})"}
+            "summary": f"{n} candidates from {r['interjections']} interjections "
+                       f"({'ranked' if r['ranking_applied'] else 'unranked, non-English'})",
+            # The one `proof` check whose evidence must *not* be quoted as a finding. A
+            # candidate is a located exchange, not a verdict — the judge decides — so the row
+            # says where the text went and what it is not. Handing a reporter that is required
+            # to quote something a pile of unjudged candidates is how a pre-pass designed to
+            # over-select turns into findings it was never allowed to make.
+            "specifics": [f"{n} located exchanges are in candidates.txt for the judge — a "
+                          f"candidate is not a finding until the judge has ruled on it"] * bool(n)}
 
 
 @register("specification", "specification", evidence="evidenced", label="spec",
@@ -228,7 +300,10 @@ def _specification(ctx):
                             f"with no tools and no question back "
                             f"({a.get('vague_requests', 0)}/{a.get('requests', 0)} named nothing "
                             f"specific; first edit after "
-                            f"{r2e if r2e is not None else 'n/a — no edits'})"}
+                            f"{r2e if r2e is not None else 'n/a — no edits'})",
+            "specifics": [f"turn {u['turn']}: \"{u['prompt'][:90]}\" — answered with "
+                          f"{u['reply_chars']:,} chars, no tool call, no question back"
+                          for u in a.get("unclarified", [])]}
 
 
 # These two are the reason the body key is called `summary`: their detectors already
