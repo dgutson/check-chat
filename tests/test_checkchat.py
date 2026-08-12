@@ -1489,3 +1489,65 @@ def test_an_unmeasured_depth_is_null_and_not_zero():
     seams = detect.compaction(_compacted())["seams"]
     assert seams[0]["depth_before"] == 100_212 and seams[0]["depth_after"] == 26_146
     assert seams[1]["depth_after"] is None, "no response after the seam, so nothing measured"
+
+
+# ------------------------------------------- a session with nothing in it to judge
+#
+# Trap 6's downstream consequence, and it only exists because trap 6 was fixed correctly.
+# A fork or resume of a compacted session opens on the summary record; that record is not a
+# turn, so the transcript can hold responses and no human turn at all. Everything below the
+# excerpt still works on that shape — which is the problem.
+
+
+def _fork_of_a_compacted_session(tmp_path):
+    """Responses, tool calls and a seam, and not one thing the user typed."""
+    return transcript.load(write(tmp_path, [
+        {"type": "system", "subtype": "compact_boundary", "timestamp": "2026-08-08T00:00:00Z",
+         "compactMetadata": {"trigger": "auto", "preTokens": 100_212}},
+        {"type": "user", "isCompactSummary": True, "timestamp": "2026-08-08T00:00:00Z",
+         "message": {"role": "user", "content": "Summary of the earlier conversation: " + "x" * 300}},
+        _asst("continuing from the summary", calls=[("t1", "Read", {"file_path": "/repo/a.py"})]),
+        _result("t1", "file body"),
+        _asst("done", req="r2"),
+    ], name="fork.jsonl"))
+
+
+def test_a_transcript_with_no_human_turn_is_an_error_and_not_an_empty_excerpt(tmp_path,
+                                                                              monkeypatch):
+    """The empty excerpt is the failure mode worth pinning, because it does not look like
+    one. `selected` picks `range(0)` exchanges, `build` returns "", and the checks go right
+    on running and firing — so the report arrives with numbers in it and the judge is handed
+    a blank page and asked to grade the conversation it does not contain."""
+    sess = _fork_of_a_compacted_session(tmp_path)
+    assert sess.steps and sess.calls and not sess.turns, "the shape this is all about"
+    assert digest.build(sess) == "", "the defect itself, pinned before the guard is trusted"
+    assert checks.run(checks.Context(session=sess))["compaction"]["fired"] is True, \
+        "checks fire on it, which is why an empty excerpt reads as a measured report"
+
+    d = tmp_path / "projects" / "-repo"
+    d.mkdir(parents=True)
+    (d / "fork.jsonl").write_text((tmp_path / "fork.jsonl").read_text())
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+    monkeypatch.setattr(discover, "project_dir", lambda cwd: d)
+
+    out = cli.collect("/repo", siblings=0)
+    assert out["error"] == "transcript has assistant responses but no human turn"
+    assert "digest" not in out, "nothing may reach the judge from a session with no question"
+    assert "--session" in out["hint"], "the repair is a turn or another session, not a restart"
+
+
+def test_the_text_renderer_keeps_the_hint_that_says_how_to_fix_it(tmp_path):
+    """The registry seam has dropped correctly computed output on the way out twice, and
+    this is the third: every error `collect` returns with a hint carries the actionable half
+    *in* the hint, and `--text` — the renderer a person actually reads — printed only the
+    half that says something is wrong. Pinned on the oldest hint, not the new one, because
+    "no transcript found" is the failure users hit and it has been silently truncated all
+    along."""
+    body = cli._text({"error": "no transcript found for this directory",
+                      "hint": "pass --session <id>, or --cwd the directory the session "
+                              "was started in"}).splitlines()
+    assert body[0].startswith("error: no transcript found")
+    assert "--session" in body[1], "the hint is the only line that tells the user what to do"
+
+    assert cli._text({"error": "something with no hint"}) == "error: something with no hint", \
+        "and no blank continuation line when there is nothing to add"

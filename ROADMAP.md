@@ -506,17 +506,69 @@ invisible in the author's corpus and universal for its actual users. `caveat` di
 again: no consumer of the tier was edited, and the new check hoists above the numbers it
 reinterprets on its own.
 
+**16. A session with no human turn fails instead of judging a blank page** (2026-08-12).
+
+Item 10's downstream consequence, and it exists *because* trap 6 was fixed correctly. A fork
+or resume of an already-compacted session opens on the summary record; that record is no
+longer counted as a turn, so such a transcript holds assistant responses, tool calls and a
+seam, and nothing the user typed. `collect` guarded `not sess.steps` and never the mirror
+case, so it went straight on: `digest.selected` picks `range(0)` exchanges, `build` returns
+`""`, and the judge is dispatched to grade an empty excerpt.
+
+**The failure mode is that it does not look like one.** The checks still run and still fire —
+`compaction` and `batching` did, on the reproduction — so the report arrives with numbers in
+it and a caveat at the top, reading exactly like a measured session. Not a crash, not a blank
+report: a confident one about a conversation that is not in the excerpt. That is the shape
+this project treats as worse than a gap, so the guard returns an error and `--emit` writes
+nothing at all.
+
+The repair is stated in the error, because it is not the obvious one: **take a turn and
+re-run**, or point `--session` at the transcript that holds the conversation. Restarting is
+the wrong move here for the same reason item 10 says it is wrong after a compaction.
+
+A second defect came out of the same file, and it is the more valuable half. `_text` rendered
+`d["error"]` and dropped `d["hint"]` — so the *actionable* half of every error has been
+silently truncated for the human-readable renderer's whole life, including `no transcript
+found`, whose hint says `pass --session <id>` and is the fix for the commonest failure this
+tool has. **That is the Known Limitations leak for the third time**, and the note there
+predicted it: computed correctly, dropped on the way out. It said a third was likelier than
+it looks. It was already there.
+
+Also corrected while in `transcript.py`: the removed depth-heuristic's comment still ended
+"no compaction marker exists anywhere in the wire format", fifty lines above the code that
+now reads that marker. Item 10 flagged that sentence as a fact about the corpus wearing the
+clothes of a fact about the format, then left the copy in the source saying it.
+
+3 tests. The guard's asserts the defect first — empty `build`, checks firing — so the test
+fails if someone removes the guard *or* if the empty excerpt ever stops being reachable for
+a different reason. The renderer's is pinned on the oldest hint rather than the new one.
+
 ---
 
 ## Now — nothing, and that is a measured statement
 
-Every check has been audited for item 4's failure (item 12), no defect is outstanding,
-item 8 shipped as item 14, and item 10 shipped by manufacturing the input it was waiting
-for. What remains is items 6, 7 and 9, blocked on transcripts from a *different user* —
-which is the one kind of input that cannot be manufactured, and worth contrasting with item
-10, whose blocker was misfiled as a wait for a year's worth of luck when it was twenty
-minutes of work. Read item 12's rule before touching any of them, item 13 before trusting a
-corpus sweep, and item 14 before adding anything else to the excerpt.
+Every check has been audited for item 4's failure (item 12), item 8 shipped as item 14, and
+item 10 shipped by manufacturing the input it was waiting for. What remains is items 6, 7
+and 9, blocked on transcripts from a *different user* — which is the one kind of input that
+cannot be manufactured, and worth contrasting with item 10, whose blocker was misfiled as a
+wait for a year's worth of luck when it was twenty minutes of work. Read item 12's rule
+before touching any of them, item 13 before trusting a corpus sweep, and item 14 before
+adding anything else to the excerpt.
+
+This section previously read "no defect is outstanding", and that clause is now gone, because
+it has been false every time it was checkable. It was written in `dda7bbe` while `rereads`
+was miscounting 71% of its findings, and again in `ff26380` while item 16 sat in the code
+that same commit had just shipped. Both were real defects in shipping checks, both were found
+within a day, and neither was found by looking at this list. The claim this heading can
+support is "nothing *found*", never "nothing there" — the difference being that the first is
+a statement about the search and the second is a statement about the code.
+
+The reason it fails in this specific direction is worth keeping: **this is the one list that
+audits the audit tool, and it enumerates the checks rather than the pipeline around them.**
+Items 4, 12 and 15 are all "a check computed the wrong number"; item 16 is the first where
+every check was right and the *excerpt* was empty. Nothing verifies that `collect`'s output is
+fit to hand a judge except `collect` itself, so a fourth of item 16's shape would be just as
+invisible.
 
 ---
 
@@ -627,10 +679,14 @@ replacement against, which is what disqualifies it.
 - **Blinding is enforced by instruction, not by the sandbox.** `tools: []` was the intent;
   the harness grants *all* tools for an empty list. The judge is `tools: ["Read"]` and is
   told to read only what it is given. Re-test if the harness ever supports an empty grant.
-- **The registry seam has leaked findings twice** — `rereads` returning `fires` where the
-  registry reads `fired`, and the text renderer's hardcoded dimension list. Both were
-  computed correctly and dropped on the way out. A third leak is likelier than it looks;
-  when adding a check, verify it appears in `--text`, not just in the JSON.
+- **The renderer seam has now leaked three times** — `rereads` returning `fires` where the
+  registry reads `fired`, the text renderer's hardcoded dimension list, and `_text` dropping
+  the `hint` on every error it printed (item 16). All three were computed correctly and lost
+  on the way out. This bullet used to say "a third leak is likelier than it looks"; it was
+  already in the code when that was written, and the third was not a *check* at all, which is
+  why "verify a new check appears in `--text`" did not catch it. **The rule is wider than it
+  was stated: nothing that `collect` returns is rendered by default.** Verify it appears in
+  `--text`, not just in the JSON — for anything, not only checks.
 - **`looks_english` is an unvalidated stopword heuristic.** It only decides whether
   sycophancy candidates get *ranked*, so failing it degrades ordering, never recall.
 - **`spill` depends on harness English wording** (`Output too large … saved to:`). It will

@@ -38,6 +38,21 @@ def collect(cwd: str, session_id: str | None = None, siblings: int = 12) -> dict
     if not sess.steps:
         return {"error": "transcript parsed but contains no assistant responses", "path": str(path)}
 
+    # The mirror of the guard above, and the asymmetric half is the one that happens: a fork
+    # or resume of a compacted session opens on the summary record, which trap 6 correctly
+    # refuses to count as a turn — so responses exist and no human turn does. `digest.selected`
+    # then picks `range(0)` exchanges and `build` returns `""`. An empty excerpt is worse than
+    # a failure: the checks still run and still fire, so the report looks measured while the
+    # judge is handed nothing and asked to grade it. Stopping here is the honest answer, and
+    # the repair it implies is a turn rather than a restart.
+    if not sess.turns:
+        return {
+            "error": "transcript has assistant responses but no human turn",
+            "path": str(path),
+            "hint": "nothing to excerpt yet — take a turn in that session and re-run, or pass "
+                    "--session <id> for the session that holds the conversation",
+        }
+
     # Machine-wide, not this directory: the one cross-session check asks whether syntax was
     # re-derived *before*, and its payoff is a skill, which is per user rather than per
     # folder. `contains` spends the scan budget only on transcripts that could match —
@@ -63,7 +78,12 @@ def collect(cwd: str, session_id: str | None = None, siblings: int = 12) -> dict
 
 def _text(d: dict) -> str:
     if "error" in d:
-        return f"error: {d['error']}"
+        # The hint is the whole actionable half — "pass --session <id>" is the fix for the
+        # commonest failure the tool has — and this is the renderer a person reads. Dropping
+        # it here was the Known Limitations leak for the third time: computed correctly, lost
+        # on the way out.
+        hint = d.get("hint")
+        return f"error: {d['error']}" + (f"\nhint:  {hint}" if hint else "")
     s = d["session"]
     partial = "  [PARTIAL]" if s.get("truncated") else ""
     lines = [

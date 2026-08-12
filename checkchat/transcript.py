@@ -254,9 +254,12 @@ def load(path: str | Path, max_bytes: int = 24 * 1024 * 1024) -> Session:
             # read as the harness having replaced the history with a summary. It was
             # removed after being measured. Across 232 transcripts, depth above the 40k
             # floor rose monotonically in **4,155 of 4,155** consecutive measurements —
-            # not one fall of any magnitude — and no compaction marker exists anywhere
-            # in the wire format to check a replacement against. See the roadmap: it is
-            # blocked on a compacted transcript, not on a better threshold.
+            # not one fall of any magnitude. That zero was ambiguous at the time and is
+            # not any more: the harness states the seam outright, this file reads it
+            # below, and on the produced transcript depth falls 100,212 -> 26,146. So
+            # the rule was right and simply never triggered. The heuristic stays cut
+            # anyway, because the record carries the trigger and the token count too and
+            # cannot false-fire on a session that merely got smaller.
             if depth:
                 prev_depth = depth
 
