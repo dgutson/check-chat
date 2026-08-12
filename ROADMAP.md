@@ -543,17 +543,101 @@ clothes of a fact about the format, then left the copy in the source saying it.
 fails if someone removes the guard *or* if the empty excerpt ever stops being reachable for
 a different reason. The renderer's is pinned on the oldest hint rather than the new one.
 
+**17. Blinding measured, and the judge's `1`s found not to be reproducible** (2026-08-12).
+
+`digest.py` claims that a judge who can see "exchange 180 of 200" will report degradation
+because long conversations are supposed to look degraded. The blinding *invariant* was
+measured long ago — 0 over-disclosing exchanges across 54 sessions — but the **benefit never
+was**, so the module's whole reason for existing rested on an assertion. 18 judge dispatches
+later it still does, for a reason worth writing down.
+
+**Design, because a sloppier version answers a different question.** Both arms get the same
+exchanges from the same `selected()` call, the same 1200/1400 caps and the same ledger:
+coverage is held constant so a difference is attributable to blinding and not to how much was
+shown. Arm B differs in exactly three ways — true `Exchange n of N` labels, a stated total,
+`_scrub` not applied — plus the two anti-position lines removed from the rubric, verified by
+`diff` as the only rubric change. Same agent type in both arms, so agent identity is not a
+confound either. Five sessions at 26/24/18/11/6 turns, paired so each session is its own
+control.
+
+| result | number |
+|---|---|
+| `should_restart` identical across arms | **5 of 5 pairs** |
+| all six dimensions, exact agreement | **27 of 30 cells (90%)** |
+| disagreements | 3, all `B > A`, both on the two longest sessions |
+| does `should_restart` track length, either arm | **no** — 26t→0, 24t→0, 18t→1, 11t→0, 6t→**1** |
+
+**That looked like a clean null and it was not, which is the actual lesson.** Replicating the
+two disputed sessions to n=3 per arm dissolved all three disagreements into run-to-run noise:
+
+| | `self_consistency` | `should_restart` |
+|---|---|---|
+| 4d46b43d arm A | {0,0,1} | {0,0,0} |
+| 4d46b43d arm B | {1,0,1} | {0,**1**,0} |
+| b3c7cb10 arm A | {0,0,0} | {0,0,0} |
+| b3c7cb10 arm B | {1,0,0} | {0,0,0} |
+
+So `should_restart` — the "identical 5 of 5" headline — **flips 0→1→0 across three runs of one
+arm on one excerpt.** The agreement was luck. Arm A wanders on the same dimension, the
+distributions overlap, and there is no arm effect to find. A weak variance asymmetry survives
+in the counts (arm A unanimous in 11/12 cells, arm B in 8/12) at roughly p≈0.3 on n=3:
+**recorded so nobody re-derives it, not to be built on.**
+
+**The finding that outlived the question it came from.** Every observed flip was `0↔1`. Not
+one involved a `2` or a `3`. The same excerpt, same rubric, same model returns
+`self_consistency: 0` or `1` depending on the run — and the skill's decision table thresholds
+at **≥ 2**, so the noise sits below everything that changes what the user is told. The
+architecture absorbs it, whether by design or by luck.
+
+**What this leaves open,** and it is narrow rather than nothing: a non-zero score is
+*reported* at 1, with quoted evidence, presented exactly like a stable one. In this project's
+own vocabulary a single-dispatch `1` is empirically **`weak` tier — "hedge explicitly, never
+threshold it"** — while the report gives it `evidenced` framing. That is item 15's shape with
+a different cause: telling a user with specifics about a defect that a re-run would score 0.
+The cheap fix is to hedge `1`s in the report; the thorough one is to corroborate them, for
+which the roadmap already has the pattern.
+
+**Bounded exactly as far as the corpus allows, and no further.** Blinding shows **no
+measurable effect at 6–26 turns**. It is *not* established that blinding does nothing: the
+longest session on this machine is 26 turns and the claim is about 200, so the case the
+mechanism was designed for was never in the sample. Same wall as items 6, 7 and 9 —
+one user's corpus — and the asymmetry matters, because a null here is weak evidence for
+removing blinding while a positive would have been strong evidence for keeping it. Do not
+read this entry as licence to un-blind anything. Both arms were also the same model; a
+weaker judge may lean on position more.
+
+**One methodological note, recorded because the transcript shows the trap working.** Between
+replicates arriving, the session twice narrated a pattern — first "Arm A is reproducible and
+Arm B is not", then that the asymmetry was strengthening — and the final Arm A replicate
+falsified it. A decision rule written before the data (which of three outcomes each result
+would mean) is what kept it out of the conclusion. Item 13 warns about phantoms in a corpus
+sweep; this is the same failure with live results, and the defence is the same one.
+
 ---
 
-## Now — nothing, and that is a measured statement
+## Now — one thing, and it is a presentation fix
 
-Every check has been audited for item 4's failure (item 12), item 8 shipped as item 14, and
-item 10 shipped by manufacturing the input it was waiting for. What remains is items 6, 7
-and 9, blocked on transcripts from a *different user* — which is the one kind of input that
-cannot be manufactured, and worth contrasting with item 10, whose blocker was misfiled as a
-wait for a year's worth of luck when it was twenty minutes of work. Read item 12's rule
-before touching any of them, item 13 before trusting a corpus sweep, and item 14 before
-adding anything else to the excerpt.
+**18. Hedge the judge's `1`s, or corroborate them.** Item 17 measured a single-dispatch score
+of `1` as not reproducible, and the report presents it quoted and framed like a stable
+finding. Nothing the user *acts* on is affected — the decision table thresholds at ≥ 2 and
+every observed flip was `0↔1` — so this is a reporting defect, not a wrong number, and it is
+the first item here of that kind.
+- *Cheap version:* say in the report that a `1` is a single read and may not survive a re-run,
+  the same way the `weak` tier is already hedged. No new dispatch, no measurement needed.
+- *Thorough version:* corroborate before reporting, which costs a second dispatch per session
+  and needs a rule for disagreement. Do not build this without first deciding whether a
+  finding nobody acts on is worth a second judge call — the honest answer may be no, and
+  "hedge it" is then the whole fix.
+- *How you would know it is finished:* a `1` in `--text` and in the skill's report reads
+  differently from a `2`. Item 12's registry-seam rule applies — verify it in `--text`.
+
+Everything else is unchanged. Every check has been audited for item 4's failure (item 12),
+item 8 shipped as item 14, and item 10 shipped by manufacturing the input it was waiting for.
+What remains beyond item 18 is items 6, 7 and 9, blocked on transcripts from a *different
+user* — which is the one kind of input that cannot be manufactured, and worth contrasting with
+item 10, whose blocker was misfiled as a wait for a year's worth of luck when it was twenty
+minutes of work. Read item 12's rule before touching any of them, item 13 before trusting a
+corpus sweep, and item 14 before adding anything else to the excerpt.
 
 This section previously read "no defect is outstanding", and that clause is now gone, because
 it has been false every time it was checkable. It was written in `dda7bbe` while `rereads`
@@ -565,10 +649,18 @@ a statement about the search and the second is a statement about the code.
 
 The reason it fails in this specific direction is worth keeping: **this is the one list that
 audits the audit tool, and it enumerates the checks rather than the pipeline around them.**
-Items 4, 12 and 15 are all "a check computed the wrong number"; item 16 is the first where
-every check was right and the *excerpt* was empty. Nothing verifies that `collect`'s output is
-fit to hand a judge except `collect` itself, so a fourth of item 16's shape would be just as
-invisible.
+The defects now sort into three kinds, and the list only ever enumerated the first:
+
+1. **A check computed the wrong number** — items 4, 12, 15. What the registry describes.
+2. **Every check was right and the *excerpt* was empty** — item 16. Nothing verifies that
+   `collect`'s output is fit to hand a judge except `collect` itself.
+3. **Everything was right and the *presentation* was wrong** — items 16's `_text` half and
+   17/18. A correct number, framed with more confidence than it can carry.
+
+Each kind was found once and each was invisible to the list at the time. That is three
+different seams downstream of the checks, and the pattern says the next one is also
+downstream — so when this heading next reads "nothing", the question to ask is not "is any
+check wrong" but "does anything verify what happens to a check's output after it is right".
 
 ---
 
@@ -687,6 +779,12 @@ replacement against, which is what disqualifies it.
   why "verify a new check appears in `--text`" did not catch it. **The rule is wider than it
   was stated: nothing that `collect` returns is rendered by default.** Verify it appears in
   `--text`, not just in the JSON — for anything, not only checks.
+- **A judge score of `1` is not reproducible, and is reported as though it were.** Measured
+  over 18 dispatches (item 17): the same excerpt, rubric and model returns `self_consistency`
+  or `should_restart` as 0 or 1 depending on the run. Every observed flip was `0↔1`; none
+  involved a 2 or a 3, and the decision table thresholds at ≥ 2, so **no recommendation the
+  user acts on turns on the unstable part**. What is exposed is the reporting: a `1` reaches
+  the user quoted and framed like a stable finding. Treat single-dispatch `1`s as `weak` tier.
 - **`looks_english` is an unvalidated stopword heuristic.** It only decides whether
   sycophancy candidates get *ranked*, so failing it degrades ordering, never recall.
 - **`spill` depends on harness English wording** (`Output too large … saved to:`). It will
