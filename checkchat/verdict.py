@@ -511,6 +511,14 @@ def render(v: Verdict) -> str:
         lines.append(f"  warning: {w}")
     for d in v.dropped:
         lines.append(f"  dropped: {d}")
+    # The candidate verdicts are the headline of the dimension this plugin is named for —
+    # the Python only *locates* candidates and the judge decides which are real — and they
+    # reached `as_dict` and never this renderer, which is the one the skill is told to read.
+    # Counted the same way as the two open-world lists, because the same thing is true of
+    # all three: what survived validation is not what the reply claimed.
+    if v.candidates:
+        ruled = sum(1 for c in v.candidates if c["is_sycophancy"])
+        lines.append(f"  candidate_verdicts: {len(v.candidates)} judged, {ruled} sycophancy")
     if v.other_findings:
         lines.append(f"  other_findings kept: {len(v.other_findings)}")
     if v.wasted_effort:

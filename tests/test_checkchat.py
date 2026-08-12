@@ -16,8 +16,10 @@ observed to fire is indistinguishable from a broken one, so it fires here on pur
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -832,6 +834,257 @@ def test_catalog_describes_every_check():
         assert c["question"].endswith("?") or c["question"]
 
 
+# --------------------------------------------------------------- the renderer seam
+#
+# The seam between "computed correctly" and "printed at all", which has leaked three times:
+# `rereads` returned `fires` where the registry read `fired`, the text renderer held a
+# hardcoded dimension list, and `_text` dropped the `hint` from every error it printed. Each
+# fix was discipline plus a note, and each note failed — the third leak was not even a check,
+# so "verify a new check appears in `--text`" could not have caught it.
+#
+# So the rule is mechanised here rather than written down again, and in the widest form the
+# three leaks justify: **nothing that `collect` returns is rendered by default.** Every check
+# is walked out of the registry, every top-level key is walked out of the output, and a key
+# that is deliberately not printed has to say so in `cli.TEXT_OMITS` with the renderer a
+# person does read it in. The same walk is done for `verdict.render`, because a judge reply
+# reaches a person through a second renderer over entirely different data.
+
+
+def _collected(tmp_path, monkeypatch, records=None, name="seam.jsonl"):
+    """A real `collect()` run — the whole path from the registry to the renderer.
+
+    Pinned end to end on purpose: every one of the three leaks lived *between* a check and
+    the text, so a test that renders a hand-built dict would have missed all three.
+    """
+    d = tmp_path / "projects" / "-repo"
+    d.mkdir(parents=True, exist_ok=True)
+    write(d, records or [
+        _human("read the file and tell me what it does"),
+        _asst("", calls=[("t1", "Read", {"file_path": "/repo/a.py"})]),
+        _result("t1", "x" * 4000),
+        _asst("it parses the config.", req="r2"),
+    ], name=name)
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+    monkeypatch.setattr(discover, "project_dir", lambda cwd: d)
+    return cli.collect("/repo", siblings=0)
+
+
+def test_every_registered_check_reaches_the_text_renderer(tmp_path, monkeypatch):
+    """The invariant the three leaks were each one instance of."""
+    d = _collected(tmp_path, monkeypatch)
+    text = cli._text(d)
+
+    assert set(d["checks"]) == set(checks.REGISTRY), "the walk covers the registry, not a list"
+    for name in checks.REGISTRY:
+        line = d["checks"][name].get("line")
+        assert line, f"{name} produced no line, so `--text` prints nothing for it"
+        assert line in text, f"{name} was computed and lost on the way out: {line!r}"
+
+
+def test_a_check_in_a_dimension_nobody_added_to_the_order_map_still_prints(tmp_path,
+                                                                          monkeypatch):
+    """Leak 2, as a permanent control. The renderer's dimension list was hardcoded, so a
+    check registered under an unlisted dimension vanished. It now sorts last and prints."""
+    @checks.register("frontier", "brand_new_dimension", question="?", evidence="raw",
+                     label="frontier")
+    def _frontier(ctx):
+        return {"fired": False, "summary": "printed even though nothing lists this dimension"}
+
+    try:
+        text = cli._text(_collected(tmp_path, monkeypatch))
+        assert "frontier   printed even though nothing lists this dimension" in text
+        rows = [ln for ln in text.splitlines() if ln[:2] in ("  ", "* ", "! ")]
+        assert rows[-1].startswith("  frontier"), "sorts last, is not dropped"
+    finally:
+        checks.REGISTRY.pop("frontier", None)
+
+
+def test_a_check_that_forgets_its_summary_says_so_instead_of_vanishing(tmp_path, monkeypatch):
+    """The failure mode this seam produces is silence, so silence is what must be impossible.
+
+    A check with no line used to render as nothing at all — indistinguishable from a check
+    that ran clean. Now the registry composes every line, so the absence prints as one."""
+    @checks.register("mute", "opportunity", question="?", evidence="raw")
+    def _mute(ctx):
+        return {"fired": True}                      # fires, and says nothing about why
+
+    try:
+        d = _collected(tmp_path, monkeypatch)
+        text = cli._text(d)
+        assert d["checks"]["mute"]["line"] == checks.line(checks.REGISTRY["mute"], None)
+        assert "mute       check returned no summary" in text
+        assert "mute" in text.split("fired:")[1], "and it still reports as fired"
+    finally:
+        checks.REGISTRY.pop("mute", None)
+
+
+def test_a_label_is_declared_once_and_is_looked_up_where_it_is_read(tmp_path, monkeypatch,
+                                                                    capsys):
+    """Item 20. Three checks print under a word the registry does not use — `cli`, `partial`,
+    `spec` — because each wrote its own label into its own line. A free-form label unlinked to
+    the name is a rename away from being stale, and a word in `--text` that appears in neither
+    `--catalog` nor the JSON cannot be looked up by whoever reads it. Both halves are pinned:
+    the label is applied in one place, and it is printed beside the name it belongs to."""
+    aliases = {n: c.label for n, c in checks.REGISTRY.items() if c.label != n}
+    assert aliases, "no label differs from its name, so this test proves nothing"
+
+    d = _collected(tmp_path, monkeypatch)
+    for name, chk in checks.REGISTRY.items():
+        r = d["checks"][name]
+        assert r["label"] == chk.label, "the JSON carries the word `--text` shows"
+        assert r["line"].startswith(chk.label), "the label column belongs to the registry"
+
+    cli.main(["--catalog"])
+    rows = capsys.readouterr().out.splitlines()
+    for name, chk in checks.REGISTRY.items():
+        columns = next(ln for ln in rows if ln.startswith(name + " ")).split()
+        # By column, not by `in`: every one of the three labels is a *substring* of the name
+        # it is meant to be independent of — `cli` of `cli_probes`, `spec` of `specification`
+        # — so a containment test passes with the label column deleted entirely. Measured:
+        # removing it from `--catalog` left this test green until it was written this way.
+        assert columns[:2] == [name, chk.label], \
+            f"{name} prints as {chk.label!r} and --catalog does not say so beside the name"
+
+
+def test_every_key_collect_returns_is_rendered_or_declared(tmp_path, monkeypatch):
+    """The widest form of the rule, and the one the third leak needed: not *checks* reach the
+    renderer, but everything `collect` returns. A new key is classified or the test fails."""
+    d = _collected(tmp_path, monkeypatch)
+    text = cli._text(d)
+    evidence = {
+        "session": f"turns {d['session']['turns']}",
+        "checks": d["checks"]["dumps"]["line"],
+        "fired": "fired:",
+        "capabilities": "skills:",
+    }
+    for key in d:
+        if key in cli.TEXT_OMITS:
+            continue
+        assert key in evidence, (
+            f"`{key}` is new in collect(): render it in `--text`, or record in "
+            f"cli.TEXT_OMITS which renderer a person reads it in, and why")
+        assert evidence[key] in text, f"`{key}` is computed on every run and printed on none"
+
+    for key, reason in cli.TEXT_OMITS.items():
+        head, _, tail = key.partition(".")
+        assert head in d and (not tail or tail in d[head]), \
+            f"TEXT_OMITS excuses `{key}`, which collect() no longer returns"
+        assert reason.strip(), "an omission with no reason is the leak wearing a note"
+
+
+def _flips_the_output(d, key):
+    """Does a boolean actually change what is printed? The only honest probe for one.
+
+    `truncated: False` renders as the *absence* of `[PARTIAL]`, which no substring search can
+    tell apart from a value nobody read. Flipping it can."""
+    other = json.loads(json.dumps(d, default=str))
+    other["session"][key] = not other["session"][key]
+    return cli._text(other) != cli._text(d)
+
+
+def test_every_fact_about_the_session_is_rendered_or_declared(tmp_path, monkeypatch):
+    """The same walk one level down, because the rule is about values and not positions.
+
+    Found here, all four of the same class as the three leaks: `model`, `digest_exchanges`,
+    `digest_gapped` and `path` were computed on every run and printed on none — and the
+    excerpt pair is the one that matters, since a verdict over 8 of 40 exchanges reads
+    differently from a verdict over all of them and nothing told the reader which it was."""
+    d = _collected(tmp_path, monkeypatch)
+    s, text = d["session"], cli._text(d)
+    shown = {
+        "id": s["id"][:8], "path": s["path"], "model": s["model"],
+        "turns": f"turns {s['turns']}", "responses": f"responses {s['responses']}",
+        "calls": f"calls {s['calls']}", "depth_tokens": f"{s['depth_tokens']:,} tok",
+        "analysis_ms": f"{s['analysis_ms']}ms",
+        "digest_exchanges": f"excerpt {s['digest_exchanges']}/",
+    }
+    for key, value in s.items():
+        if f"session.{key}" in cli.TEXT_OMITS:
+            continue
+        if isinstance(value, bool):
+            assert _flips_the_output(d, key), \
+                f"`session.{key}` is a fact nothing in `--text` depends on"
+            continue
+        assert key in shown, (
+            f"`session.{key}` is new: render it in `--text`, or record in cli.TEXT_OMITS "
+            f"which renderer a person reads it in, and why")
+        assert shown[key] in text, f"`session.{key}` is computed on every run, printed on none"
+
+
+def test_capabilities_answers_the_question_the_skill_branches_on(tmp_path, monkeypatch):
+    """Found by the walk above, and it is the same shape as the other three. `capabilities`
+    was computed on every run and printed on none, so a skill following its own instructions
+    — use `--emit`, do not read the raw JSON — could not learn whether `plugin-finder` is
+    installed, which is the branch it is told to take before proposing to build anything."""
+    d = _collected(tmp_path, monkeypatch)
+    assert d["capabilities"]["plugin_finder"] is False, "an empty CLAUDE_CONFIG_DIR has none"
+    assert "plugin-finder NOT installed" in cli._text(d), \
+        "the negative is the load-bearing one: it means propose a search, not assume one ran"
+
+
+def test_an_error_prints_every_key_it_carries(tmp_path, monkeypatch):
+    """Leak 3 was the `hint`. `cwd` and `path` were the same leak beside it: the commonest
+    failure this tool has is "no transcript found for this directory", and the directory it
+    searched — the one thing that makes the message diagnosable — was dropped on the way out.
+    Rendered by walking the dict, so the next key an error carries needs no edit here."""
+    monkeypatch.setattr(discover, "project_dir", lambda cwd: tmp_path / "nothing-here")
+    d = cli.collect("/repo", siblings=0)
+    text = cli._text(d)
+    assert d["error"] and set(d) == {"error", "cwd", "hint"}
+    for key, value in d.items():
+        assert str(value) in text, f"an error carries `{key}` and `--text` drops it"
+
+
+def test_every_field_of_a_verdict_reaches_its_renderer():
+    """The second seam, and the reason item 19 could not be one test. A judge reply reaches a
+    person through `verdict.render`, over different data and in a different file — a field
+    correct in `--json` and absent there is the identical defect in a second place. Driven by
+    `dataclasses.fields`, so a new field fails here until it is rendered or excused."""
+    v = verdict.Verdict(
+        scores={"sycophancy": {"score": 3, "evidence": "…", "tier": "evidenced"}},
+        candidates=[{"candidate": 1, "is_sycophancy": True, "why": "folded"}],
+        other_findings=[{"finding": "f", "quote": "q", "actionable": True}],
+        wasted_effort=[{"finding": "w", "quote": "q", "actionable": False}],
+        problems=["PROBLEM-SENTINEL"], warnings=["WARNING-SENTINEL"],
+        dropped=["DROPPED-SENTINEL"], unverified=["UNVERIFIED-SENTINEL"],
+        quotes_checked=97, quotes_found=41, verified_against=1234,
+        status=verdict.SALVAGED,
+    )
+    text = verdict.render(v)
+    probes = {
+        "scores": lambda t: re.search(r"sycophancy\s+3", t),
+        "candidates": lambda t: "candidate_verdicts: 1 judged, 1 sycophancy" in t,
+        "other_findings": lambda t: "other_findings kept: 1" in t,
+        "wasted_effort": lambda t: "wasted_effort kept: 1" in t,
+        "problems": lambda t: "PROBLEM-SENTINEL" in t,
+        "warnings": lambda t: "WARNING-SENTINEL" in t,
+        "dropped": lambda t: "DROPPED-SENTINEL" in t,
+        "unverified": lambda t: "UNVERIFIED-SENTINEL" in t,
+        "quotes_checked": lambda t: "97" in t,
+        "quotes_found": lambda t: "41" in t,
+        "verified_against": lambda t: "1,234" in t,
+        "status": lambda t: "SALVAGED" in t,
+    }
+    for f in dataclasses.fields(verdict.Verdict):
+        assert f.name in probes, (
+            f"`Verdict.{f.name}` is new: render it in `verdict.render`, or add a probe here "
+            f"saying which renderer a person reads it in")
+        assert probes[f.name](text), f"`Verdict.{f.name}` never reaches the renderer"
+
+
+def test_a_judged_candidate_is_the_headline_and_reaches_the_skill(tmp_path):
+    """Found by the walk above. The Python only *locates* sycophancy candidates; the judge
+    decides which are real, and that decision is the finding this plugin is named for. It
+    reached `--json` and not the renderer the skill is told to read."""
+    reply = json.dumps({
+        **json.loads(_reply()),
+        "candidate_verdicts": [{"candidate": 1, "is_sycophancy": True, "why": "reversed"},
+                               {"candidate": 2, "is_sycophancy": False, "why": "argued"}],
+    })
+    text = verdict.render(verdict.check(reply))
+    assert "candidate_verdicts: 2 judged, 1 sycophancy" in text
+
+
 # ------------------------------------------------------------------ blinding
 
 def test_digest_is_blinded(tmp_path):
@@ -1085,8 +1338,14 @@ def test_a_caveat_is_reported_above_the_numbers_it_qualifies(tmp_path):
     body = out.splitlines()
 
     assert "[PARTIAL]" in body[0], "the header carries counts that are now a lower bound"
-    assert body[1].startswith("! continuity"), "hoisted by evidence level, not by name"
-    assert "MB were never read" in body[1]
+    # By order, not by line number: "above the numbers it qualifies" is the invariant, and
+    # pinning it to `body[1]` made it fail when the header grew a line — a false alarm from a
+    # test that was right about the rule and wrong about how it knew.
+    caveat = next(i for i, ln in enumerate(body) if ln.startswith("! "))
+    numbers = next(i for i, ln in enumerate(body) if ln[:2] in ("  ", "* "))
+    assert body[caveat].startswith("! continuity"), "hoisted by evidence level, not by name"
+    assert "MB were never read" in body[caveat]
+    assert caveat < numbers, "printed above the counts it invalidates, wherever they start"
     assert sum(1 for ln in body if ln.lstrip("*! ").startswith("continuity")) == 1, \
         "hoisted out of its dimension, not printed in both places"
 

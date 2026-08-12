@@ -6,13 +6,15 @@ pick it up.
 The plugin is **installed and working end-to-end** on this machine: `/check-chat` runs,
 the deterministic pass takes ~280ms (~86ms of it before item 4 made the cross-session
 comparison actually load other sessions; `--siblings 0` returns it to ~20ms), the judge
-dispatches by `subagent_type`, and the report comes back. 95 tests pass, in the project's
+dispatches by `subagent_type`, and the report comes back. 105 tests pass, in the project's
 **own** virtualenv (`.venv/bin/pytest` from the repo root). What follows is what is not
 done, ordered by whether it blocks someone other than the author.
 
 Every item says how you would know it is finished. The rule the project is built on
 applies to this list too: **a detector that cannot be shown to fire on real transcripts
-does not ship**, and one that fires in most sessions is a ranking, not an alarm.
+does not ship**, and one that fires in most sessions is a ranking, not an alarm. Since
+item 19 the rule extends to the tests as well: a test is not evidence until the invariant
+it guards has been broken on purpose and the test has been watched to fail.
 
 ---
 
@@ -661,56 +663,110 @@ beside the hedge saying a different thing.
 the positive test and communicate nothing, so a `2`, a `3` and an all-zero reply are each
 asserted to render unhedged.
 
+**19 + 20. The renderer seam is mechanised, and the label is declared** (2026-08-12).
+Done together because they are one seam: 20 decides what 19's test is written against.
+
+*Item 20's answer is **declared**, not derived.* Three checks print under a word the registry
+does not use — `cli_probes`→`cli`, `partial_use`→`partial`, `specification`→`spec` — and
+deriving them needs a rule that fits all three. "First underscore-separated token" fits two
+and not the third, so derivation here is three special cases wearing a rule's clothes. The
+label is therefore a registry field, applied in exactly **one** place (`checks.line`), and a
+check now returns `summary` — the sentence, without the label. A stale label stopped being a
+thing that can exist rather than a thing a test catches. It is also printed beside its name in
+`--catalog` and carried in the JSON, which is the other half of item 20: a word a reader sees
+in `--text` must be lookupable somewhere.
+
+*The refactor is byte-identical.* `--text` over a fixed transcript, rendered by `HEAD` and by
+the working tree, diffs to nothing — every label already sat in an 11-column field, so the
+padding constant reproduces all fourteen exactly. Worth doing that way: the whole change is
+invisible to a user, which is the only kind of refactor this seam should get.
+
+*What the mechanism is.* Three walks, each enumerating a producer and asserting everything it
+computes reaches a renderer a person reads: the registry into `--text`, `collect()`'s keys
+(and `session`'s, one level down) into `--text`, and `Verdict`'s dataclass fields into
+`verdict.render`. Anything deliberately unprinted goes in `cli.TEXT_OMITS` **with the renderer
+that does show it** — an omission has to name a reader, not merely be silent.
+
+*This answers item 19's open question — one mechanism, or one per seam? **One rule, three
+walks.*** The rule is shared; the enumeration cannot be, because the producers are a registry,
+a dict literal and a dataclass, and each is walked in its own way. A single generic mechanism
+over all three would have had to invent a common shape they do not have.
+
+*What it found the moment it existed — four leaks, and not one of them is a check:*
+
+| leak | consequence |
+|---|---|
+| `capabilities` printed nowhere | the skill *branches* on whether `plugin-finder` is installed, and following its own instruction to use `--emit` it could never see the answer. `SKILL.md` said to read it "in the JSON", which contradicts "never read the raw JSON" three sections earlier — the excerpt rides along with it. Now a summary line, and the list arrives via a shell filter that never enters context |
+| `cwd` and `path` on the error path | "no transcript found for this directory" never said **which** directory. Item 16 fixed the `hint` beside them and left these; they are now rendered by walking the dict, so the next key an error carries needs no edit |
+| `candidate_verdicts` absent from `verdict.render` | the judge's ruling on each located candidate — the headline of the dimension this plugin is named for — reached `--json` and not the renderer `SKILL.md` tells the skill to read |
+| `session.model`, `digest_exchanges`, `digest_gapped`, `path` | the excerpt pair is the one that matters: **a verdict over 8 of 40 exchanges is a different claim from a verdict over all of them**, and nothing told the reader which they had |
+
+*The evidence that the tests work is 14 mutations, each caught* — a leak reintroduced in every
+place one has ever occurred: the capabilities line, the error keys, the candidate line, a new
+key in `collect()`, a new field on `Verdict`, a new fact in `digest.stats`, the hardcoded
+dimension list, a check dropped from the dimension loop, the label column, the label in the
+JSON, and both booleans made to stop changing the output. **Two of the fourteen did not fail
+the first time**, which is the part worth keeping — see the two new entries under "ways to get
+a false answer". 10 tests, 105 total.
+
+*What this does **not** cover, stated because the heading above it has been false every time
+it was checkable:* the walk reaches `collect()`'s top level and `session`'s facts. It does not
+reach the payload *inside* a check — `proofs`, `groups`, `events`, `recurring` — which is
+where the specifics the skill is required to quote actually live. That is item 21, and it was
+found by this mechanism rather than by reading this list.
+
 ---
 
-## Now — the next defect is downstream of the checks, and there is a mechanism for it
+## Now — the seam again, one level in, where the quoted evidence lives
 
-**19. Pin the renderer seam with a registry-walking test.** This is the item the blinding
-experiment was a detour from, and it is now overdue: **the seam has leaked three times**
-(`rereads` returning `fires` where the registry reads `fired`, the text renderer's hardcoded
-dimension list, and `_text` dropping the `hint` on every error it printed), each fix was
-discipline plus a note, and the note failed because the third leak was not a check at all.
-Item 18 was a fourth near-miss caught only by remembering the pattern mid-edit — the tier
-would have been correct in `--json` and invisible in the renderer the skill actually reads.
-- *What to build:* a test that walks the registry and asserts every check's `line` reaches
-  `--text` verbatim, and that every key `collect()` can return is rendered somewhere. The
-  invariant holds today for all 14 checks (verified 2026-08-12) — pin it before it stops.
-- *The known gap it does not close:* `verdict.render` is a second renderer over different
-  data, and item 18 had to be verified there by hand. Decide whether one mechanism can cover
-  both seams or whether each needs its own.
-- *How you would know it is finished:* renaming a check's registry key, or adding a check
-  whose `line` never reaches `--text`, fails a test rather than shipping quietly.
-
-**20. Decide the name/label question, which is the same seam upstream.** Three checks render
-under a different word than their registry name — `cli_probes`→`cli`, `partial_use`→`partial`,
-`specification`→`spec` — because each check writes its own label into its own `line` string.
-The label is therefore free-form and unlinked to the name: a rename silently keeps a stale
-label, and `--text` shows a word that appears in neither `--catalog` nor the JSON. Is a
-display label *derived* from the registry name, or *declared* in the registry? Today it is
-neither. Cheap, and item 19's test would be written against whichever answer this gets.
+**21. The specifics a check computes have no path to the person who must quote them.**
+Found by item 19's walk the day it was built, and it is the same seam one level in. The skill
+is *required* to report an `evidenced` finding "with the specifics quoted", and dimension 3's
+build-this prompt fires only on "the actual command run 15 times, the actual file dumped and
+later grepped". Those specifics exist — `partial_use.proofs`, `producers.groups`,
+`spill.events`, `cli_probes.recurring` — and **the skill is never handed any of them.** It
+gets one summary line per check from `--emit`, and it is told in the same file not to read the
+raw JSON, because the excerpt rides along with it.
+- *Why this is the worst instance of the four, not the smallest:* every other leak cost a
+  reader a fact. This one puts a rule and its evidence on opposite sides of a wall, so the
+  three ways out are all bad — re-run without `--emit` and drag the excerpt into the session
+  under diagnosis, report vaguely and violate the rule, or fill the gap with plausible
+  specifics, which is the exact failure `verdict.py` exists to catch on the judge's side.
+- *Half of dimension 3 already has a path, and it is the model's half:* item 14's ledger sits
+  inside the excerpt, so a `wasted_effort` finding can quote a real row. The deterministic
+  half — the part with proof-grade evidence — has nothing.
+- *What to build, and the design decision is real:* an `--emit` file carrying the fired
+  checks' payloads is the obvious shape, and it needs a measurement first, because the
+  payloads are unbounded (`dumps` alone can carry every large call). **Measure what they cost
+  on the corpus before printing any of them**, cap what needs capping, and state the cap in
+  the output the way `LEDGER_ROWS` does rather than truncating silently.
+- *How you would know it is finished:* a dimension-3 report quotes a filename and a command
+  the Python found, and the session never held the excerpt to do it.
 
 Everything else is unchanged. Every check has been audited for item 4's failure (item 12),
-item 8 shipped as item 14, and item 10 shipped by manufacturing the input it was waiting for.
-What remains beyond items 19 and 20 is items 6, 7 and 9, blocked on transcripts from a
-*different user* — which is the one kind of input that cannot be manufactured, and worth
-contrasting with item 10, whose blocker was misfiled as a wait for a year's worth of luck when
-it was twenty minutes of work. Read item 12's rule before touching any of them, item 13 before
-trusting a corpus sweep, and item 14 before adding anything else to the excerpt.
+item 8 shipped as item 14, item 10 shipped by manufacturing the input it was waiting for, and
+items 19 and 20 shipped as one seam. What remains beyond item 21 is items 6, 7 and 9, blocked
+on transcripts from a *different user* — the one kind of input that cannot be manufactured,
+and worth contrasting with item 10, whose blocker was misfiled as a wait for a year's worth of
+luck when it was twenty minutes of work. Read item 12's rule before touching any of them,
+item 13 before trusting a corpus sweep, and item 14 before adding anything else to the
+excerpt.
 
-**Note what kind of item 19 is, because it is a first.** Items 4, 12, 13, 15, 16 and 18 were
-each a defect found and fixed. Item 19 fixes nothing — the invariant holds today — and exists
-only to keep a seam from leaking a fourth time. Everything on this list so far was found by
-running the tool, reading its real output, or producing an input it had never seen; none of it
-was found by discipline, and three notes written to enforce discipline all failed. That is the
-argument for spending the next unit of work on a mechanism rather than on another detector.
+**What item 19 established, now that it has been built.** It was filed as the first item that
+fixes nothing — a mechanism to stop a seam leaking a fourth time, where every previous item
+was a defect found by running the tool. That framing was wrong in the most useful direction:
+the mechanism found **four** leaks within an hour of existing, none of them a check, and
+pointed at a fifth (item 21). A walk that enumerates a producer is not only a guard against
+the next leak; it is a search over the ones already there, and this list had no other way to
+run that search. The three notes that failed were not failures of discipline — they were
+attempts to hold a list in a head that nobody re-reads at the moment it matters.
 
-This section previously read "no defect is outstanding", and that clause is now gone, because
-it has been false every time it was checkable. It was written in `dda7bbe` while `rereads`
-was miscounting 71% of its findings, and again in `ff26380` while item 16 sat in the code
-that same commit had just shipped. Both were real defects in shipping checks, both were found
-within a day, and neither was found by looking at this list. The claim this heading can
-support is "nothing *found*", never "nothing there" — the difference being that the first is
-a statement about the search and the second is a statement about the code.
+This section previously read "no defect is outstanding", and that clause is gone, because it
+has been false every time it was checkable. It was written in `dda7bbe` while `rereads` was
+miscounting 71% of its findings, again in `ff26380` while item 16 sat in the code that same
+commit had just shipped, and it would have been false again on 2026-08-12 with four leaks in
+the tree. The claim this heading can support is "nothing *found*", never "nothing there" —
+the first is a statement about the search and the second is a statement about the code.
 
 The reason it fails in this specific direction is worth keeping: **this is the one list that
 audits the audit tool, and it enumerates the checks rather than the pipeline around them.**
@@ -723,9 +779,24 @@ The defects now sort into three kinds, and the list only ever enumerated the fir
    17/18. A correct number, framed with more confidence than it can carry.
 
 Each kind was found once and each was invisible to the list at the time. That is three
-different seams downstream of the checks, and the pattern says the next one is also
+different seams downstream of the checks, and the pattern said the next one would also be
 downstream — so when this heading next reads "nothing", the question to ask is not "is any
 check wrong" but "does anything verify what happens to a check's output after it is right".
+
+**The prediction held, and a fourth kind arrived with it.** Item 19's walks were built for
+kind 3 and found four instances of it in an hour. Item 21 is the fourth kind and does not fit
+any of the three:
+
+4. **Everything was right, was presented correctly, and the *consumer* was never given it** —
+   item 21, and `capabilities` was the same shape caught early. The number is computed, the
+   line is printed, and the rule that needs it lives in a document on the other side of a
+   wall the tool built on purpose. No renderer is wrong; there is no renderer at all.
+
+Kind 4 is the one a walk finds cheaply and a reading never does, because the defect is not in
+any file you would open — it is between `SKILL.md`'s requirements and `collect()`'s output,
+and only enumerating one against the other shows it. **The generalisation is to ask, of every
+rule the skill is given, which artifact carries the evidence that rule demands.** That
+question has now been asked once, of one document, and it found item 21 immediately.
 
 ---
 
@@ -836,18 +907,26 @@ replacement against, which is what disqualifies it.
 - **Blinding is enforced by instruction, not by the sandbox.** `tools: []` was the intent;
   the harness grants *all* tools for an empty list. The judge is `tools: ["Read"]` and is
   told to read only what it is given. Re-test if the harness ever supports an empty grant.
-- **The renderer seam has now leaked three times** — `rereads` returning `fires` where the
-  registry reads `fired`, the text renderer's hardcoded dimension list, and `_text` dropping
-  the `hint` on every error it printed (item 16). All three were computed correctly and lost
-  on the way out. This bullet used to say "a third leak is likelier than it looks"; it was
-  already in the code when that was written, and the third was not a *check* at all, which is
-  why "verify a new check appears in `--text`" did not catch it. **The rule is wider than it
-  was stated: nothing that `collect` returns is rendered by default.** Verify it appears in
-  `--text`, not just in the JSON — for anything, not only checks. Wider again after item 18,
-  which added a field to a judge reply rather than to `collect`: **`--text` is not the only
-  human-readable renderer.** A judge reply reaches a person through `verdict.render`, and a
-  tier correct in `--json` and absent there would have been the same leak in a second place.
-  Item 19 is the mechanism; until it exists, ask which renderer a person reads *this* data in.
+- **The renderer seam leaked seven times, and now has a mechanism** — `rereads` returning
+  `fires` where the registry reads `fired`, the text renderer's hardcoded dimension list,
+  `_text` dropping the `hint` on every error it printed (item 16), and the four item 19 found
+  by walking for them. Every one was computed correctly and lost on the way out. This bullet
+  used to say "a third leak is likelier than it looks"; it was already in the code when that
+  was written, then said three when there were seven. **The rule is: nothing that a producer
+  computes is rendered by default** — not only checks, and `--text` is not the only renderer,
+  since a judge reply reaches a person through `verdict.render`. Item 19 mechanised it in the
+  only form that survives being forgotten: a walk over the producer, and a declaration naming
+  the renderer for anything deliberately unprinted. What the walks do **not** reach is a
+  check's payload, which is item 21 — so the question "which renderer does a person read
+  *this* data in" is still the one to ask by hand, and it is now only worth asking about data
+  no walk enumerates.
+- **A declared omission is a hole the mechanism cannot see into.** `cli.TEXT_OMITS` is what
+  keeps the walk honest, and it is also the way to silence it: an entry there ends the test's
+  interest in a key permanently. The guards are thin on purpose — the reason must be non-empty
+  and must name the renderer that *does* show the data, and every excused key must still
+  exist — but nothing checks that the named renderer really shows it. Two entries today,
+  both pointing at a check's own line. Read new entries as changes to the contract, not as
+  test maintenance.
 - **A judge score of `1` is not reproducible** — now marked rather than merely known
   (item 18). Measured over 18 dispatches (item 17): the same excerpt, rubric and model
   returns `self_consistency` or `should_restart` as 0 or 1 depending on the run. Every
@@ -977,6 +1056,26 @@ Each cost a full re-run to discover, so they are recorded here rather than relea
   invisible as a problem *and* as a non-problem until the check was rewritten as `rows <=
   tools_line` rather than `==`. An equality that is false for a benign reason gets relaxed
   or deleted; a one-directional bound survives, and it is the one that means anything.
+- **A containment test can be satisfied by the thing it was meant to be independent of.**
+  Item 20's test asserted `chk.label in row` of `--catalog` — and passed with the label column
+  deleted outright, because all three labels are *substrings of their own names*: `cli` of
+  `cli_probes`, `spec` of `specification`, `partial` of `partial_use`. The assertion was
+  checking that a name contains its own prefix. It only surfaced because the column was
+  deliberately removed to see the test fail; nothing about the green run looked wrong. When an
+  assertion says "X appears in Y", ask what *else* in Y could produce that appearance —
+  and prefer comparing a field to comparing a haystack, which is what fixed it.
+- **A mutation that errors is not a mutation that failed.** Breaking `Verdict` to prove the
+  field-walk catches a new field produced `1 error` at collection time, not `1 failed` —
+  the injected line had a literal `\n` in it and the module would not parse, so *every* test
+  in the file was skipped and the walk never ran. An error reads like a pass of the harness
+  and a failure of the code; it is the reverse. Re-run it properly before believing the test
+  works: of fourteen mutations here, this was one of the two that did not fail the first time,
+  and the other was the containment bug above.
+- **A test pinned to a line number is right about the rule and wrong about how it knows.**
+  `test_a_caveat_is_reported_above_the_numbers_it_qualifies` asserted `body[1]`, and broke the
+  moment the header grew a second line — a false alarm about a rule that was never violated.
+  Rewritten to compare the caveat's index against the first check line's, which is the
+  invariant it always meant. Prefer an assertion about order to an assertion about position.
 - **A zero is a measurement of the query as much as of the corpus.** The most expensive
   one yet: `cli_probes` returned 0 across the whole corpus for its entire shipped life,
   the number was correct every time, and the detector was twice queued for deletion —

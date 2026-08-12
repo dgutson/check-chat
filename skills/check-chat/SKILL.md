@@ -417,11 +417,20 @@ is noise.
 
 **Check it doesn't already exist first.** In this order:
 
-1. `capabilities` in the JSON already lists every installed skill with its
-   description — read it there, for free. Do not go looking on disk.
-2. If nothing matches and `capabilities.plugin_finder` is true, run
+1. Every installed skill and its description is already on disk, enumerated for free.
+   Do not go looking yourself, and do **not** re-run without `--emit` to read the JSON
+   into your context — that drags the whole excerpt in with it. Filter it in the shell:
+
+   ```bash
+   checkchat --cwd "$PWD" --siblings 0 | python3 -c 'import json, sys
+   for c in json.load(sys.stdin)["capabilities"]["capabilities"]:
+       print(c["kind"], c["name"], "-", c["description"][:160])'
+   ```
+
+2. If nothing matches and step 1's `skills:` line said **plugin-finder available**, run
    `~/.claude/plugins/cache/plugin-finder-marketplace/plugin-finder/*/scripts/find-plugin.py <keywords>`
-   before proposing anything new. Never reimplement marketplace search.
+   before proposing anything new. Never reimplement marketplace search. If it said
+   *NOT installed*, say the marketplace was never searched rather than implying it was.
 
 If something already covers it, say so and stop — that is a better outcome than a new
 skill, and this plugin exists partly to prevent duplicate tooling.

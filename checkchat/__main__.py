@@ -76,20 +76,58 @@ def collect(cwd: str, session_id: str | None = None, siblings: int = 12) -> dict
     return out
 
 
+# What `--text` does not print, and why. Item 19's tests walk `collect()`'s keys against
+# this, so the next key added to the output is either rendered or given a reason here —
+# never silently invisible, which is the way this seam has leaked all seven times. Every
+# entry names the renderer that *does* show the data, because "not in --text" is only
+# acceptable when a person reads it somewhere; an entry with no reader is the leak with
+# paperwork.
+TEXT_OMITS = {
+    "digest": "the blinded excerpt itself — it must not pass through the calling session's "
+              "context, which is what --emit exists for; --digest-only prints it on purpose",
+    "catalog": "describes the checks rather than this session, and every check's own line is "
+               "already here; `--catalog` is its renderer",
+    # One level down, because "nothing is rendered by default" is not a statement about
+    # top-level keys. These two are rendered by a check's line rather than by the header,
+    # which is a renderer a person reads — an unrendered *value* is the leak, not an
+    # unrendered position.
+    "session.dropped_bytes": "the `continuity` check's line states it with its magnitude, "
+                             "which is the form that stops a reader assuming it was marginal",
+    "session.compactions": "the `compaction` check's line states every seam and its trigger",
+}
+
+
 def _text(d: dict) -> str:
     if "error" in d:
         # The hint is the whole actionable half — "pass --session <id>" is the fix for the
         # commonest failure the tool has — and this is the renderer a person reads. Dropping
         # it here was the Known Limitations leak for the third time: computed correctly, lost
-        # on the way out.
+        # on the way out. Everything else an error carries is context that was dropped the
+        # same way — `cwd` is *which* directory found no transcript, `path` is which file was
+        # unusable — and it is printed by walking the dict rather than from a list here,
+        # because a list in a renderer is the other shape this seam leaks in.
         hint = d.get("hint")
-        return f"error: {d['error']}" + (f"\nhint:  {hint}" if hint else "")
+        rest = [f"{k}:".ljust(7) + str(v) for k, v in d.items() if k not in ("error", "hint")]
+        return "\n".join([f"error: {d['error']}", *rest]
+                         + ([f"hint:  {hint}"] if hint else []))
     s = d["session"]
     partial = "  [PARTIAL]" if s.get("truncated") else ""
     lines = [
         f"session {(s.get('id') or '?')[:8]} | turns {s['turns']} responses {s['responses']} "
         f"calls {s['calls']} | depth {s['depth_tokens']:,} tok | {s['analysis_ms']}ms{partial}",
     ]
+
+    # How much of the conversation the judge is about to be shown, which was computed on
+    # every run and printed on none: a verdict over 8 of 40 exchanges is a different claim
+    # from a verdict over all of them, and nothing said which one the reader had. `model`
+    # and `path` are here for the same reason — both were in the JSON alone, and both change
+    # how the numbers above read. Whichever renderer a person uses has to carry them.
+    if "digest_exchanges" in s:
+        lines.append(f"excerpt {s['digest_exchanges']}/{s['turns']} exchanges"
+                     + (", middle cut" if s.get("digest_gapped") else ", contiguous")
+                     + f" | model {s.get('model') or 'unknown'}")
+    if s.get("path"):
+        lines.append(f"from {s['path']}")
 
     # A `caveat` check qualifies every number below it, so it goes above them. Selected
     # by evidence level rather than by name, so the next one of its kind needs no edit.
@@ -109,6 +147,17 @@ def _text(d: dict) -> str:
                 lines.append(f"{mark} {r['line']}")
     fired = d.get("fired") or []
     lines.append(f"\nfired: {', '.join(fired) if fired else 'nothing'}")
+
+    # `capabilities` was computed on every run and printed on none of them, so the one thing
+    # the skill *branches* on — is `plugin-finder` installed, or must a search be proposed
+    # from scratch — was unreachable from the summary it is told to use. The list itself
+    # stays out: it is long, it is about the machine rather than this session, and a shell
+    # filter over the JSON reads it without spending a single token of context.
+    caps = d.get("capabilities") or {}
+    if caps:
+        lines.append(f"skills: {caps.get('count', 0)} installed | plugin-finder "
+                     f"{'available' if caps.get('plugin_finder') else 'NOT installed'} "
+                     f"| names and descriptions: `capabilities` in the JSON, not here")
     return "\n".join(lines)
 
 
@@ -156,8 +205,12 @@ def main(argv: list[str] | None = None) -> int:
     a = ap.parse_args(argv)
 
     if a.catalog:
+        # The label column is here because it used to be nowhere: `--text` printed `cli`,
+        # `partial` and `spec` for checks this list called `cli_probes`, `partial_use` and
+        # `specification`, so a word a reader saw could not be looked up anywhere.
         for c in checks.catalog():
-            print(f"{c['name']:<14} {c['dimension']:<12} [{c['evidence']}]  {c['question']}")
+            print(f"{c['name']:<14} {c['label']:<11} {c['dimension']:<13} "
+                  f"[{c['evidence']}]  {c['question']}")
         return 0
 
     if a.verdict is not None:

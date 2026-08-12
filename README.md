@@ -119,7 +119,8 @@ Two honest caveats, because an earlier version of this paragraph overstated it a
 overstatement survived two real bugs before anyone noticed:
 
 - A check introducing a **new dimension** sorts last in the text renderer until you add
-  it to the `order` map in `__main__.py`. It degrades gracefully; it is not dropped.
+  it to the `order` map in `__main__.py`. It degrades gracefully; it is not dropped —
+  and that is now a test rather than a promise.
 - The skill's dimension-3 section names specific checks in a "lead with these" order.
   A new check is still reported without touching it, just not in that priority list.
 
@@ -134,11 +135,20 @@ def _my_check(ctx):                       # ctx.session; ctx.others = other sess
                                           # to those containing `--help` (see ROADMAP)
     hits = [c for c in ctx.session.calls if ...]
     return {"fired": bool(hits), "hits": hits,
-            "line": f"my_check   {len(hits)} occurrences"}
+            "summary": f"{len(hits)} occurrences"}   # the sentence, without the label
 ```
 
 Import it from `checks.py` and it appears in `--catalog`, in the JSON, and in the
 report automatically.
+
+**`summary` is the sentence; the label column is the registry's.** Pass `label=` only
+to print under a different word than the name — `cli_probes` prints as `cli` — and it
+is then printed beside the name in `--catalog`, so a reader can look up what they saw.
+Writing the label into the summary by hand is the one thing not to do: it was how three
+checks came to print a word that appeared nowhere else in the tool. A check that returns
+no `summary` prints *"check returned no summary"* rather than vanishing from the report,
+because silence is this seam's failure mode and a correctly computed finding has been
+lost on the way out three times.
 
 The `evidence` field is the load-bearing part. It tells the skill **how loudly the
 finding may be reported** — `proof` leads the report, `ranked` may only produce a
