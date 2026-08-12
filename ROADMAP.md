@@ -1,12 +1,12 @@
 # Roadmap
 
-State as of 2026-08-11. Published; see "Done" below. Written so a session with no memory of how this got here can
+State as of 2026-08-12. Published; see "Done" below. Written so a session with no memory of how this got here can
 pick it up.
 
 The plugin is **installed and working end-to-end** on this machine: `/check-chat` runs,
 the deterministic pass takes ~280ms (~86ms of it before item 4 made the cross-session
 comparison actually load other sessions; `--siblings 0` returns it to ~20ms), the judge
-dispatches by `subagent_type`, and the report comes back. 90 tests pass, in the project's
+dispatches by `subagent_type`, and the report comes back. 95 tests pass, in the project's
 **own** virtualenv (`.venv/bin/pytest` from the repo root). What follows is what is not
 done, ordered by whether it blocks someone other than the author.
 
@@ -613,31 +613,96 @@ falsified it. A decision rule written before the data (which of three outcomes e
 would mean) is what kept it out of the conclusion. Item 13 warns about phantoms in a corpus
 sweep; this is the same failure with live results, and the defence is the same one.
 
+**18. A judge score of `1` now reads as the single read it is** — `tier`, `weak`
+(2026-08-12). Item 17 measured a single-dispatch `1` as not reproducible while the report
+presented it quoted and framed like a stable finding. Hedging it was the cheap option and
+corroborating it was the thorough one; **the cheap one is not a compromise here, it is the
+only one that can be built honestly.**
+
+*Why corroboration was rejected, and the deciding reason is not the cost.* A second dispatch
+needs a rule for disagreement — take the lower score, the higher, the mean, or re-dispatch
+until two agree — and **every one of those is a threshold, set against this corpus, which
+item 9 forbids.** So the thorough version was not merely twice the price; on the evidence
+available it could not be specified. The cost argument is real too and comes second: it
+doubles the LLM half of every run to stabilise a number the decision table never reads.
+
+*What made the fix small, and it is the part worth keeping.* The instability is **symmetric**
+— a reported `0` may equally have been a `1` on another run — but only a non-zero score turns
+into a quoted sentence in front of the user. A `0` produces no prose, so there is nothing to
+frame with more confidence than it deserves. **The whole exposed surface is the non-zero half
+of an interval the user never acts on**, which is why this cost one field and no dispatches.
+
+Each scored item now carries a `tier` in the same vocabulary the checks use — `weak` at 1,
+`clean` at 0, `evidenced` at 2 and above — so the skill's existing row for `weak` ("hedge
+explicitly, never threshold it") applies verbatim and no new word was invented. Selected by
+tier rather than by score, exactly as `caveat` is selected by tier rather than by name.
+
+**The claim is stated one-directionally, per this list's own rule.** `evidenced` at ≥ 2 is a
+*reporting instruction*, not the mirror of the measurement: no `2` or `3` was ever observed to
+flip, and that is an absence of evidence about the upper half of the scale rather than
+evidence of stability there. Written into the docstring in that direction so nobody later
+cites the tier as a reproducibility result.
+
+**The hedge is in the rendered line, not in a legend.** `[weak: one read; a re-run may score
+0]` prints beside the score itself, repeated per item, instead of a bare tag explained in
+`SKILL.md`. A tag whose meaning lives somewhere else is a tag that gets reported as a finding
+by the first reader who missed the explanation — and the reader here is a model reading a
+report, which is precisely the failure this project keeps finding in its own output.
+
+*One correction to this item as it was filed.* It said to verify the result in `--text`, and
+`--text` renders `collect()`, which contains no judge scores at all — the judge's reply
+reaches a human through `verdict.render`, printed by `--verdict`. Item 12's rule survives the
+correction and generalises slightly: verify it in **the human-readable renderer for that
+data**, which is not always `--text`. Confirmed by hand through `bin/checkchat` on a mixed
+reply, where a `1` carries the hedge, a `2` does not, and an unverified quote's mark sits
+beside the hedge saying a different thing.
+
+3 tests, and the negative control is the one that matters: hedging *everything* would satisfy
+the positive test and communicate nothing, so a `2`, a `3` and an all-zero reply are each
+asserted to render unhedged.
+
 ---
 
-## Now — one thing, and it is a presentation fix
+## Now — the next defect is downstream of the checks, and there is a mechanism for it
 
-**18. Hedge the judge's `1`s, or corroborate them.** Item 17 measured a single-dispatch score
-of `1` as not reproducible, and the report presents it quoted and framed like a stable
-finding. Nothing the user *acts* on is affected — the decision table thresholds at ≥ 2 and
-every observed flip was `0↔1` — so this is a reporting defect, not a wrong number, and it is
-the first item here of that kind.
-- *Cheap version:* say in the report that a `1` is a single read and may not survive a re-run,
-  the same way the `weak` tier is already hedged. No new dispatch, no measurement needed.
-- *Thorough version:* corroborate before reporting, which costs a second dispatch per session
-  and needs a rule for disagreement. Do not build this without first deciding whether a
-  finding nobody acts on is worth a second judge call — the honest answer may be no, and
-  "hedge it" is then the whole fix.
-- *How you would know it is finished:* a `1` in `--text` and in the skill's report reads
-  differently from a `2`. Item 12's registry-seam rule applies — verify it in `--text`.
+**19. Pin the renderer seam with a registry-walking test.** This is the item the blinding
+experiment was a detour from, and it is now overdue: **the seam has leaked three times**
+(`rereads` returning `fires` where the registry reads `fired`, the text renderer's hardcoded
+dimension list, and `_text` dropping the `hint` on every error it printed), each fix was
+discipline plus a note, and the note failed because the third leak was not a check at all.
+Item 18 was a fourth near-miss caught only by remembering the pattern mid-edit — the tier
+would have been correct in `--json` and invisible in the renderer the skill actually reads.
+- *What to build:* a test that walks the registry and asserts every check's `line` reaches
+  `--text` verbatim, and that every key `collect()` can return is rendered somewhere. The
+  invariant holds today for all 14 checks (verified 2026-08-12) — pin it before it stops.
+- *The known gap it does not close:* `verdict.render` is a second renderer over different
+  data, and item 18 had to be verified there by hand. Decide whether one mechanism can cover
+  both seams or whether each needs its own.
+- *How you would know it is finished:* renaming a check's registry key, or adding a check
+  whose `line` never reaches `--text`, fails a test rather than shipping quietly.
+
+**20. Decide the name/label question, which is the same seam upstream.** Three checks render
+under a different word than their registry name — `cli_probes`→`cli`, `partial_use`→`partial`,
+`specification`→`spec` — because each check writes its own label into its own `line` string.
+The label is therefore free-form and unlinked to the name: a rename silently keeps a stale
+label, and `--text` shows a word that appears in neither `--catalog` nor the JSON. Is a
+display label *derived* from the registry name, or *declared* in the registry? Today it is
+neither. Cheap, and item 19's test would be written against whichever answer this gets.
 
 Everything else is unchanged. Every check has been audited for item 4's failure (item 12),
 item 8 shipped as item 14, and item 10 shipped by manufacturing the input it was waiting for.
-What remains beyond item 18 is items 6, 7 and 9, blocked on transcripts from a *different
-user* — which is the one kind of input that cannot be manufactured, and worth contrasting with
-item 10, whose blocker was misfiled as a wait for a year's worth of luck when it was twenty
-minutes of work. Read item 12's rule before touching any of them, item 13 before trusting a
-corpus sweep, and item 14 before adding anything else to the excerpt.
+What remains beyond items 19 and 20 is items 6, 7 and 9, blocked on transcripts from a
+*different user* — which is the one kind of input that cannot be manufactured, and worth
+contrasting with item 10, whose blocker was misfiled as a wait for a year's worth of luck when
+it was twenty minutes of work. Read item 12's rule before touching any of them, item 13 before
+trusting a corpus sweep, and item 14 before adding anything else to the excerpt.
+
+**Note what kind of item 19 is, because it is a first.** Items 4, 12, 13, 15, 16 and 18 were
+each a defect found and fixed. Item 19 fixes nothing — the invariant holds today — and exists
+only to keep a seam from leaking a fourth time. Everything on this list so far was found by
+running the tool, reading its real output, or producing an input it had never seen; none of it
+was found by discipline, and three notes written to enforce discipline all failed. That is the
+argument for spending the next unit of work on a mechanism rather than on another detector.
 
 This section previously read "no defect is outstanding", and that clause is now gone, because
 it has been false every time it was checkable. It was written in `dda7bbe` while `rereads`
@@ -778,13 +843,22 @@ replacement against, which is what disqualifies it.
   already in the code when that was written, and the third was not a *check* at all, which is
   why "verify a new check appears in `--text`" did not catch it. **The rule is wider than it
   was stated: nothing that `collect` returns is rendered by default.** Verify it appears in
-  `--text`, not just in the JSON — for anything, not only checks.
-- **A judge score of `1` is not reproducible, and is reported as though it were.** Measured
-  over 18 dispatches (item 17): the same excerpt, rubric and model returns `self_consistency`
-  or `should_restart` as 0 or 1 depending on the run. Every observed flip was `0↔1`; none
-  involved a 2 or a 3, and the decision table thresholds at ≥ 2, so **no recommendation the
-  user acts on turns on the unstable part**. What is exposed is the reporting: a `1` reaches
-  the user quoted and framed like a stable finding. Treat single-dispatch `1`s as `weak` tier.
+  `--text`, not just in the JSON — for anything, not only checks. Wider again after item 18,
+  which added a field to a judge reply rather than to `collect`: **`--text` is not the only
+  human-readable renderer.** A judge reply reaches a person through `verdict.render`, and a
+  tier correct in `--json` and absent there would have been the same leak in a second place.
+  Item 19 is the mechanism; until it exists, ask which renderer a person reads *this* data in.
+- **A judge score of `1` is not reproducible** — now marked rather than merely known
+  (item 18). Measured over 18 dispatches (item 17): the same excerpt, rubric and model
+  returns `self_consistency` or `should_restart` as 0 or 1 depending on the run. Every
+  observed flip was `0↔1`; none involved a 2 or a 3, and the decision table thresholds at
+  ≥ 2, so **no recommendation the user acts on turns on the unstable part**. The exposure
+  was the reporting, and item 18 closed it: such items carry `tier: "weak"` and render
+  `[weak: one read; a re-run may score 0]`. The limitation that *remains* is the
+  measurement's own boundary — a `2` is unmarked because nothing says it moves, which is
+  an absence of evidence about the upper half of the scale and not a finding of stability.
+  It is also still **one dispatch**; corroborating it was rejected for want of an honest
+  disagreement rule, not because a single read is ideal.
 - **`looks_english` is an unvalidated stopword heuristic.** It only decides whether
   sycophancy candidates get *ranked*, so failing it degrades ordering, never recall.
 - **`spill` depends on harness English wording** (`Output too large … saved to:`). It will

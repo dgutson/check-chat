@@ -147,6 +147,11 @@ does not need editing: a new check inherits the right reporting discipline from 
 own declaration. If a check raises, the registry catches it and the other checks still
 run.
 
+The same vocabulary now labels the **judge's** six scores, which is why it is worth
+keeping small: a single-dispatch score of `1` was measured to flip between identical runs,
+so it is tagged `weak` and inherits "hedge explicitly, never threshold it" rather than
+needing a rule of its own.
+
 **Before you add one, measure it.** The rule that produced the table above is that a
 detector which cannot be shown to fire on real transcripts does not ship — and one
 that fires in most sessions is a ranking, not an alarm. Two predecessor signals were

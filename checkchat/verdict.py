@@ -5,7 +5,7 @@ strict JSON" and the next step simply believed it. There is no API layer here to
 a response format — the model is reached through the harness's subagent mechanism, not
 an SDK — so enforcement has to happen after the fact, which means it happens here.
 
-Three jobs, and the second is the one worth having:
+Five jobs, and the second is the one worth having:
 
 **1. Parse tolerantly.** The common failure is not broken JSON, it is *fenced* or
 *prefaced* JSON: a ```json wrapper, or a sentence of throat-clearing before the brace.
@@ -39,6 +39,15 @@ bad the offence is** — the same rule that let truncation ship while compaction
   sycophancy finding over a formatting artifact would be the same confident-zero failure
   the plugin exists to catch.
 
+**5. Say how firmly a score may be reported.** The judge is dispatched once, and a
+single-dispatch `1` was measured over 18 dispatches to be *not reproducible*: the same
+excerpt, the same rubric and the same model return `0` or `1` on the same dimension
+depending on the run. Nothing the user acts on turns on that — every observed flip was
+`0↔1` and the skill's decision table thresholds at `>= 2` — so this is not a wrong
+number. What was wrong is that a `1` reached the report quoted and framed exactly like a
+stable finding, which is the same defect as telling a user with specifics about waste
+they never spent. Each score therefore carries a `tier`, and the renderer says it.
+
 What it must never do is let a sentence nobody said reach the user inside quotation
 marks. Not verifying is a third possible answer and is reported as one: an unrun check
 must not read like a passed one.
@@ -60,6 +69,13 @@ ITEMS = (
 )
 
 OK, SALVAGED, UNUSABLE = 0, 1, 2
+
+# The one score measured to move between identical dispatches, and the words that say so
+# wherever it is printed. The hedge lives in the rendered line rather than in a legend the
+# reader has to have been told: a tag whose meaning is documented elsewhere is a tag that
+# gets reported as a finding by anyone who missed the documentation.
+UNSTABLE_SCORE = 1
+HEDGE = "one read; a re-run may score 0"
 
 _FENCE = re.compile(r"```(?:json)?\s*(.*?)```", re.S)
 
@@ -150,6 +166,31 @@ def quote_appears(quote: str, hay: str) -> bool | None:
     if spans:
         return all(appears(s, hay) for s in spans)
     return False if len(whole) >= MIN_QUOTE else None
+
+
+def tier(score: int) -> str:
+    """How firmly this score may be reported — in the vocabulary the checks already use.
+
+    Not a restatement of the number, which speaks for itself, but a claim about how much
+    weight the reporting step is entitled to put on it. `weak` is the tier the registry
+    defines as *"hedge explicitly, never threshold it"*, and a single-dispatch `1` was
+    measured to be exactly that: same excerpt, same rubric, same model, `0` or `1`
+    depending on the run.
+
+    **`evidenced` at 2 and above is the status quo and is deliberately not the mirror
+    claim.** No `2` or `3` was ever observed to flip — but that is an absence of evidence
+    about the upper half of the scale, not evidence of stability there, and this tier says
+    only "report it with its specifics", which is what the word already means for a check.
+    Read it as the reporting instruction it is; do not cite it as a reproducibility result.
+
+    A `0` needs no hedge for the reason that makes this whole item narrow: it produces no
+    prose to hedge. The instability is symmetric — a `0` may equally have been a `1` — but
+    only a non-zero score turns into a quoted sentence in front of the user, so only a
+    non-zero score can be framed more confidently than it deserves.
+    """
+    if score == UNSTABLE_SCORE:
+        return "weak"
+    return "clean" if score == 0 else "evidenced"
 
 
 def _short(span: str, width: int = 70) -> str:
@@ -292,7 +333,8 @@ def validate(obj: dict, excerpt: str | None = None) -> Verdict:
             v.warnings.append(f"`{item}` scored {score} but its evidence contains no "
                               f"quotation — verify it is quoting the excerpt")
 
-        v.scores[item] = entry_out = {"score": score, "evidence": evidence}
+        v.scores[item] = entry_out = {"score": score, "evidence": evidence,
+                                      "tier": tier(score)}
         if hay is not None:
             _check_quotes(item, score, evidence, hay, entry_out, v)
 
@@ -444,6 +486,11 @@ def render(v: Verdict) -> str:
             lines.append(f"  {item:<22} --  UNUSABLE")
             continue
         mark = {True: "", False: "  [quote not in excerpt]", None: ""}[s.get("verified")]
+        # Both can apply, and they say different things: one is about the quote, the other
+        # about the score. The renderer is what the skill reads, so a tier computed here
+        # and shown only in `--json` would be the renderer seam leaking for a fourth time.
+        if s.get("tier") == "weak":
+            mark += f"  [weak: {HEDGE}]"
         lines.append(f"  {item:<22} {s['score']}{mark}")
 
     # Said on every run that had anything to check, including when it did not happen: a
@@ -475,6 +522,7 @@ def render(v: Verdict) -> str:
     return "\n".join(lines)
 
 
-__all__ = ["Verdict", "check", "extract", "validate", "render",
+__all__ = ["Verdict", "check", "extract", "validate", "render", "tier",
            "normalize", "quoted_spans", "appears", "quote_appears",
-           "ITEMS", "OK", "SALVAGED", "UNUSABLE", "MIN_QUOTE", "MIN_FRAGMENT"]
+           "ITEMS", "OK", "SALVAGED", "UNUSABLE", "MIN_QUOTE", "MIN_FRAGMENT",
+           "UNSTABLE_SCORE", "HEDGE"]
