@@ -972,3 +972,22 @@ replacement against, which is what disqualifies it.
   but say it straddles the seam, `self_consistency` → amnesia rather than contradiction —
   and it was cut from the prompt because ~25 lines read on every dispatch for an event
   never observed is a poor trade, not because it was wrong
+
+---
+
+## The API question, as it was settled
+
+Moved out of `ROADMAP.md` when items 23 and 24 were filed: it is a decision that stopped
+being live, and only one sentence of it still bears on open work.
+
+There is **no SDK, no framework, no API client** anywhere in this plugin — no `anthropic`,
+no POML, no PydanticAI, no HTTP. Dependencies are stdlib only and the LLM is reached through
+Claude Code's own subagent mechanism. That is why the plugin runs only inside Claude Code,
+and it is the live half: a corpus pass needs **new code** rather than a runner, which is
+item 23.
+
+Items 2 and 11 are what an SDK would have given, bought without the dependency: a schema
+check after the reply, and a grounding check on the field a schema cannot reach, both in
+`verdict.py`, because there is no API layer in which to pin a response format. **A
+structured-output API would still not have caught item 11's failure** — a fabricated quote
+is a schema-valid string, and only comparing it to the excerpt catches it.

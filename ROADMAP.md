@@ -6,11 +6,10 @@ can pick it up — **read this file, not `HISTORY.md`.**
 *This file is what is not done, plus the rules that stop it being done badly.* Finished items
 are one line each under "Shipped"; what they measured and what their filing got wrong is in
 `HISTORY.md`, which is read when you are about to change a decision, not when you are picking
-one. The split exists because finishing an item used to *lengthen* this file — a 22-line
-pending entry became a 76-line historical one — so the cost of choosing the next task grew
-with every task completed, and 63% of what a fresh session loaded was settled history. A test
-keeps this file under its budget; when it fails, the fix is to move an entry to `HISTORY.md`,
-never to write the next one shorter than it deserves.
+one. The split exists because finishing an item used to *lengthen* this file, so the cost of
+choosing the next task grew with every task completed. A test keeps this file under its
+budget; when it fails, the fix is to move an entry to `HISTORY.md`, never to write the next
+one shorter than it deserves.
 
 The plugin is **installed and working end-to-end** on this machine: `/check-chat` runs,
 the deterministic pass takes ~280ms (~86ms of it before item 4 made the cross-session
@@ -44,7 +43,7 @@ for `**<n>.` to find an entry.
 | 4 | 08-10 | `cli_probes` fires machine-wide: the comparison population was wrong, not the detector |
 | 12 | 08-10 | Every check audited for item 4's failure, and the rule that decides scope |
 | 13 | 08-11 | Prose about a command is not a command that ran — `_shell_code` |
-| 14 | 08-11 | The tool-call ledger, and a `wasted_effort` question the judge may answer with a quote |
+| 14 | 08-11 | The tool-call ledger, and a `wasted_effort` question the judge may answer with a quote — item 8's proposal, fenced by measurement |
 | 15 | 08-11 | `rereads` stops counting different slices of one file as waste (71% of its findings) |
 | 10 | 08-11 | Compaction awareness, by producing the transcript the item was "blocked" on |
 | 16 | 08-12 | A session with no human turn fails instead of judging a blank page |
@@ -56,48 +55,78 @@ for `**<n>.` to find an entry.
 
 ---
 
-## Now — nothing unblocked is *found*, and the sentence below says what that is worth
+## Now — items 23 and 24, which are what 6, 7 and 9 were actually waiting for
 
-Item 22 closed the last hop a test can reach. What remains is items 6, 7 and 9, blocked on
-transcripts from a *different user* — the one kind of input that cannot be manufactured, and
-worth contrasting with item 10, whose blocker was misfiled as a wait for a year's worth of
-luck when it was twenty minutes of work. Read item 12's rule before touching any of them,
-item 13 before trusting a corpus sweep, and item 14 before adding anything else to the
-excerpt.
+Item 22 closed the last hop a test can reach, and this section then said nothing unblocked
+was *found*, with 6, 7 and 9 filed against "transcripts from a different user" — the one
+input that cannot be manufactured. That is item 10's misfiling, reproduced. Those items
+do not need transcripts: item 9 needs a base rate and a threshold, item 6 one comparison of
+two scorers, item 7 a repo's own vocabulary. Those are **numbers**, and the blocker looked
+permanent only because they were assumed to arrive inside the conversations holding them.
+The conversations cannot travel; the measurement can. Read item 12's rule before touching
+these, item 13 before trusting a corpus sweep, 14 before adding anything to the excerpt.
 
-**What item 22 did not close, so the next session does not mistake a green suite for a
-finished question.** The walks check that a field the skill names exists, and that a number
-the skill hands the user is printed in the block a person reads. They cannot check that a
-rule's *meaning* is satisfied: "quote the caveat's `warnings` rather than paraphrasing" is
-checkable, "report only what fired" is not. And the hop past `--text` — the report a model
-composes from these rules — has no mechanism at all and is not going to get one. **So the
-pass by hand is still the only thing that finds a kind 4, and item 22's mechanism only stops
-the ones it already found from coming back.** It found one on its third asking, having found
-one on each of the first two.
+**23. `--sweep` — run the shipping checks across many transcripts in one process.**
+Thin by construction: `transcript.load(path)` and `checks.run` are public and take what a
+sweep has. What is missing is the entry point — `collect()` resolves a session by
+`(cwd, session_id)` through `discover.current`, so there is no way in from a bare path, and
+the 319 transcripts across 22 project directories here must be reached by one. ~80ms per
+session measured, stdlib only: a full pass is seconds.
 
-**How the defects have sorted so far, because it is what predicts the next one.** Four kinds,
-and this list only ever enumerated the first:
+Its value is not speed. "Ways to get a false answer" below is the bill for measuring this
+corpus a dozen times by hand-rolled `find | xargs grep`: the recurring fix in that list is
+*import the function*, and two of its entries — `proof`'s truncated echo, the ledger's
+hand-rolled row format — are re-implementations that returned a plausible wrong number on the
+first run and were believed. This tool's headline finding is work a script should be doing,
+and this is the largest instance of it in its own repo.
+- *Done when:* a measurement in `HISTORY.md` cites a sweep rather than a grep, and the
+  aggregate is computed by calling the checks, with no second copy of their logic anywhere
+- *Not this:* a per-session report printed 319 times. The output is one aggregate; the
+  per-session JSON already exists for whoever wants it
 
-1. **A wrong number** — items 4, 12, 15. The only kind the checks themselves can catch.
-2. **Every check right and the *excerpt* empty** — item 16. Nothing verified that `collect`'s
-   output was fit to hand a judge except `collect`.
-3. **Everything right and the *presentation* wrong** — items 16, 17, 18, and the four that
-   item 19's walks found within an hour of existing.
-4. **Everything right and printed, and the *consumer* never given it** — items 21 and 22,
-   with `capabilities` an hour before the first. No renderer is wrong; there is no renderer
-   at all.
+**24. The share projection — the redacted aggregate a stranger can actually send.**
+Item 23's output cannot be sent as it stands: the JSON carries absolute paths, filenames,
+`specifics` rows quoting the conversation, `proof` command text and the excerpt itself. So
+this is a *projection* — the ninth instance of the seam this project has found eight times,
+with the direction inverted. `cli.TEXT_OMITS` fails when a field reaches **nobody**; a share
+manifest must fail when a field reaches **everybody**: the same walk over a producer's keys
+that items 19–22 built, default-deny rather than default-render, and the only instance of it
+where a miss is a harm and not a bug.
 
-Kinds 2, 3 and 4 are one defect at increasing distance — excerpt, renderer, consumer. The
-question this section said to ask was **"how far does a number travel before someone acts on
-it, and what checks each hop?"** All four hops now have a walk, and the fifth is prose a
-model writes, where the mechanism stops. Kind 4 has now been found three times for three
-askings, so the honest reading of "nothing found" here is *nobody has asked a fifth question
-yet*, not *there is nothing left*.
+The tool promises nothing leaves the machine, so it must not transmit: write a file, print
+exactly what is in it, let the person send it — opt-in, and auditable in full by whoever
+would be sending it.
+- *Done when:* a key added to a check's result reaches neither the file nor its audit until
+  it is declared — demonstrated by adding one and watching the walk fail, per item 19's rule
+- *Then, and it is the part with no code in it:* a README section and an issue template that
+  say *run this, paste this*. Without the ask, 23 and 24 produce nothing and item 9 stays
+  exactly where it is — that is who has to act, named as item 10's rule requires
 
-**"Nothing" here can only ever mean "nothing *found*".** As a claim about the code it has been
-false every time it was checkable: written in `dda7bbe` while `rereads` was miscounting 71% of
-its findings, again in `ff26380` while item 16 sat in the commit that shipped it, and it would
-have been false again on 08-12 with four leaks in the tree. The full account is in `HISTORY.md`.
+**What item 22 did not close.** The walks check that a field the skill names exists, and that
+a number it hands the user is printed where a person reads. They cannot check that a rule's
+*meaning* is satisfied — "quote the caveat's `warnings`" is checkable, "report only what
+fired" is not — and the hop past `--text`, the report a model composes, has no mechanism and
+is not getting one. **The pass by hand is still the only thing that finds a kind 4**; item
+22's mechanism only stops the ones it already found from returning. It found one on its third
+asking, having found one on each of the first two.
+
+**How the defects have sorted, because it is what predicts the next one.** Four kinds, and
+this list once enumerated only the first. The reasoning is `HISTORY.md`'s "How items 19 and 21
+changed what this project looks for"; this is the summary that section says it is.
+
+1. **A wrong number** — 4, 12, 15. The only kind the checks themselves can catch.
+2. **Every check right and the *excerpt* empty** — 16.
+3. **Everything right and the *presentation* wrong** — 16, 17, 18, and four from item 19's walks.
+4. **Everything right and printed, the *consumer* never given it** — 21, 22, `capabilities`.
+
+Kinds 2–4 are one defect at increasing distance — excerpt, renderer, consumer — so the
+question is **"how far does a number travel before someone acts on it, and what checks each
+hop?"** All four hops have a walk; the fifth is prose. Kind 4 has been found three times for
+three askings, and **items 23 and 24 are the fifth asking**: does a number reach a consumer
+who is not on this machine. Which is why "nothing found" was never a claim about the code —
+it was false in `dda7bbe` (`rereads` miscounting 71% of its findings), false in `ff26380`
+(item 16 sitting in the commit that shipped it), and false again on 08-12 with four leaks in
+the tree.
 
 ---
 
@@ -118,7 +147,8 @@ Ship as an *optional* accelerator: `fastembed` (ONNX, ~50 MB) if importable, cha
 fallback otherwise, and say in the output which ran. Do not make it a hard dependency —
 stdlib-only is a real property worth keeping. **Measure whether the encoder beats the
 fallback before taking the dependency**; on Daniel's corpus both score zero and are
-indistinguishable.
+indistinguishable. Item 23 is how that comparison runs on a corpus that *does* re-ask,
+without the corpus moving: ship both scorers, report both numbers and their agreement.
 
 Audited under item 12 and its zero is *not* item 4's: a re-ask is only a re-ask within one
 conversation, so one session is the right population by construction, and no re-scoping
@@ -129,52 +159,36 @@ Same verdict for item 7, which is justified by the same corpus.
 "Is this answer about *this* codebase, or a tutorial?" No neural net needed. Proposed,
 never built.
 
-**8. Close the open world on the *counting* dimension.** — **done, see item 14.**
-Shipped as a tool-call ledger inside the excerpt plus a `wasted_effort` question. The
-sketch here said "ask what looks wasteful"; measurement said that framing is a false-
-positive engine and the question had to be fenced. Item 14 has the numbers.
-
 ---
 
-## Blocked on input Daniel does not have
+## Blocked on another person acting — and items 23 and 24 are what would let them
 
 **9. Calibrate the specification / junior-auditor checks.**
 They have only **synthetic** positive controls. Daniel's corpus is the negative control
 for the second time — median 1 turn to first edit, essentially zero re-asking — so it
 establishes no base rate and no threshold for the population these were built for.
-- *Unblocks when:* real transcripts from a junior developer exist
+- *Unblocks when:* one other person runs item 23 and sends item 24's file. Not "when real
+  junior transcripts exist" — that filing is item 10's, and it sat for a day because the
+  passive voice hid the fact that a base rate is a *number* and numbers can be sent
 - Until then: do not tune thresholds against Daniel's sessions. That corpus can only show
   the detectors are quiet for an expert, which is the correct behaviour and not evidence
   of anything else.
-
-**10. Compaction awareness** — **shipped 2026-08-11**, by producing the transcript this
-section claimed to be waiting for. It is named here only because of what it proves about the
-section it sat in: item 9 needs *another person's* transcripts, and item 10 needed a file any
-session can make on purpose in twenty minutes with one environment variable. Both were written
-in the passive voice of waiting, and only one of them was waiting. The cut heuristic, the
-measurements that cut it, and the recipe that unblocked it are in `HISTORY.md`.
 
 ## Known limitations — accepted and documented, not bugs to fix
 
 - **Blinding is enforced by instruction, not by the sandbox.** `tools: []` was the intent;
   the harness grants *all* tools for an empty list. The judge is `tools: ["Read"]` and is
   told to read only what it is given. Re-test if the harness ever supports an empty grant.
-- **The renderer seam leaked seven times, and now has a mechanism** — `rereads` returning
-  `fires` where the registry reads `fired`, the text renderer's hardcoded dimension list,
-  `_text` dropping the `hint` on every error it printed (item 16), and the four item 19 found
-  by walking for them. Every one was computed correctly and lost on the way out. This bullet
-  used to say "a third leak is likelier than it looks"; it was already in the code when that
-  was written, then said three when there were seven. **The rule is: nothing that a producer
-  computes is rendered by default** — not only checks, and `--text` is not the only renderer,
-  since a judge reply reaches a person through `verdict.render`. Item 19 mechanised it in the
-  only form that survives being forgotten: a walk over the producer, and a declaration naming
-  the renderer for anything deliberately unprinted. Item 21 extended it to a check's payload,
-  which now prints under the check that found it. Item 22 took it one hop further, to
-  `SKILL.md`'s prose: a field the skill names must resolve in real data, and a number it hands
-  the user must appear in the block a person reads — which is how the `compaction` seam depths
-  turned out to be the eighth leak. What no walk reaches is the hop after that, the report a
-  model composes from these rules, so "which renderer does a person read *this* data in" is
-  still asked by hand there and always will be.
+- **The renderer seam has leaked eight times, and now has a mechanism.** Every one was
+  computed correctly and lost on the way out; the enumeration is in `HISTORY.md`, and the
+  count in this bullet has twice been wrong by understating it. **The rule is: nothing a
+  producer computes is rendered by default** — not only checks, and `--text` is not the only
+  renderer, since a judge reply reaches a person through `verdict.render`. Item 19 mechanised
+  it as a walk over the producer plus a declaration naming the renderer for anything
+  deliberately unprinted; item 21 extended it to a check's payload; item 22 to `SKILL.md`'s
+  prose, which is how the `compaction` seam depths turned out to be the eighth. What no walk
+  reaches is the hop after that — the report a model composes — so "which renderer does a
+  person read *this* data in" is asked by hand there, and always will be.
 - **Every check that reads a Bash command has to mean the code, not the text — and the two
   that got it wrong were found a month apart.** `cli_probes` (item 13) and `partial_use`
   (found by item 21) both scanned the whole `command` parameter, so a commit message or an
@@ -223,6 +237,17 @@ measurements that cut it, and the recipe that unblocked it are in `HISTORY.md`.
   an absence of evidence about the upper half of the scale and not a finding of stability.
   It is also still **one dispatch**; corroborating it was rejected for want of an honest
   disagreement rule, not because a single read is ideal.
+- **Concurrent runs do not interfere, and nothing enforces that.** Two chats can run
+  `/check-chat` at once: the only write is `--emit`'s two files into the directory the caller
+  names, everything else reads `~/.claude/projects`, and both files are rewritten whole so no
+  stale half survives. `SKILL.md` names that directory `checkchat-$$`, and the shell PID
+  differs on *every* Bash call in this harness (measured: 3784417 then 3784490) — so
+  concurrent chats cannot collide, and step 2b can reach step 1's directory only by copying
+  the printed path. Both halves are properties of `$$` rather than decisions, and the failure
+  is quiet: a re-typed `checkchat-$$` finds nothing, and the troubleshooting table reads the
+  resulting `quotes: NOT CHECKED` as "you forgot `--against`". The default `${TMPDIR:-/tmp}`
+  is world-readable on a multi-user box, leaving the blinded excerpt where another account can
+  read it — item 24's question about the same data.
 - **`looks_english` is an unvalidated stopword heuristic.** It only decides whether
   sycophancy candidates get *ranked*, so failing it degrades ordering, never recall.
 - **`spill` depends on harness English wording** (`Output too large … saved to:`). It will
@@ -257,19 +282,10 @@ measurements that cut it, and the recipe that unblocked it are in `HISTORY.md`.
   silent. So a `wasted_effort` null means "nothing in what you were shown", never "nothing
   happened" — the same distinction `sessions_compared` draws for `cli_probes`.
 
-## The API question — settled, and it is not what is holding this back
-
-There is **no SDK, no framework, no API client** anywhere in this plugin — no `anthropic`,
-no POML, no PydanticAI, no HTTP. Dependencies are stdlib only, the LLM is reached through
-Claude Code's own subagent mechanism, and that is why the plugin runs only inside Claude
-Code and could not sweep transcripts in CI without new code.
-
-Items 2 and 11 are what an SDK would have given, bought without the dependency: a schema
-check after the reply and a grounding check on the field a schema cannot reach, both in
-`verdict.py`, because there is no API layer in which to pin a response format. **A
-structured-output API would still not have caught item 11's failure** — a fabricated quote
-is a schema-valid string, and only comparing it to the excerpt catches it. Detail in
-`HISTORY.md`.
+**The API question is settled and is not what holds this back** — no SDK, no framework, no
+HTTP, stdlib only, the LLM reached through Claude Code's own subagent mechanism. What that
+costs and what items 2 and 11 bought without the dependency is in `HISTORY.md`; the live
+half of it is item 23's, since it is why a corpus pass needs new code rather than a runner.
 
 ---
 
