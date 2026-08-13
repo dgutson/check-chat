@@ -21,7 +21,7 @@ import sys
 import time
 from pathlib import Path
 
-from . import checks, detect, digest, discover, inventory, transcript, verdict
+from . import checks, detect, digest, discover, inventory, sweep, transcript, verdict
 
 
 def collect(cwd: str, session_id: str | None = None, siblings: int = 12) -> dict:
@@ -226,6 +226,12 @@ def parser() -> argparse.ArgumentParser:
     ap.add_argument("--emit", metavar="DIR", default=None,
                     help="write the judge's evidence to DIR and print only a summary, so the "
                          "excerpt never passes through the calling session's context")
+    ap.add_argument("--sweep", action="store_true",
+                    help="aggregate the checks over every transcript on this machine and "
+                         "exit — a maintainer's tool for base rates, not a session report")
+    ap.add_argument("--sweep-limit", type=int, default=0, metavar="N",
+                    help="with --sweep, consider only the N newest transcripts (0 = all). "
+                         "The cap is reported in the output")
     return ap
 
 
@@ -246,6 +252,14 @@ def main(argv: list[str] | None = None) -> int:
         for c in checks.catalog():
             print(f"{c['name']:<14} {c['label']:<11} {c['dimension']:<13} "
                   f"[{c['evidence']}]  {c['question']}")
+        return 0
+
+    if a.sweep:
+        # Before `collect`, because a sweep is not a report about this session and must not
+        # need one: `collect` fails when no transcript matches the cwd, which is the normal
+        # case for a maintainer running this from a checkout.
+        s = sweep.run(limit=a.sweep_limit, siblings=a.siblings)
+        print(sweep.render(s) if a.text else json.dumps(s, indent=1, default=str))
         return 0
 
     if a.verdict is not None:

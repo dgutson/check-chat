@@ -991,3 +991,84 @@ check after the reply, and a grounding check on the field a schema cannot reach,
 `verdict.py`, because there is no API layer in which to pin a response format. **A
 structured-output API would still not have caught item 11's failure** — a fabricated quote
 is a schema-valid string, and only comparing it to the excerpt catches it.
+
+---
+
+**23. `--sweep` — the corpus pass, and the first measurement it made was of itself**
+(2026-08-13). `checkchat --sweep` runs the shipping checks over every session transcript on
+the machine and prints one aggregate: per check, how often it fired, and a generic
+distribution of every numeric field it happens to carry. `checkchat/sweep.py`, 5 tests,
+128 total.
+
+*What it is for.* The dozen entries under "Measuring against the corpus" in `ROADMAP.md` are
+the bill for measuring this corpus by hand-rolled `find | xargs grep`, and the recurring fix
+in that list is **import the function**. So the module holds no per-check knowledge at all:
+it walks whatever `checks.run` returns, and a check registered tomorrow is summarised with no
+edit to it. That is now an invariant with a control — a check registered inside a test appears
+in the aggregate, and hardcoding a subset fails it.
+
+*The corpus is much smaller than every previous number said, and the difference is not
+rounding.* 319 `.jsonl` files exist under `~/.claude/projects`; the tool sees **255**, and
+of those **72 have an assistant response at all**, 71 are distinct histories, and **69 have a
+human turn** and are therefore sessions `collect()` would report on. The two gaps:
+
+| gap | count | what it is |
+|---|---|---|
+| files → session logs | 64 | subagent logs, one directory deeper: `<session-id>/subagents/agent-*.jsonl` |
+| session logs → with responses | 183 | opened, a prompt queued or attached, never answered — `queue-operation`/`attachment`/`user` records and nothing else |
+
+Both were invisible before. The 64 were excluded correctly by `all_transcripts()`'s
+`*/*.jsonl` glob and excluded *by accident of its depth* — counting a subagent's tool calls
+as another session would let one session corroborate itself, which is the fork artifact by a
+new route. The docstring now says so, per item 12's rule. Earlier corpus figures in this file
+that count "transcripts" or "files" are counting the 255 or the 300; **69 is the number that
+means sessions**, and it is small, which strengthens item 9 rather than weakening it.
+
+*The defect it shipped with, for exactly one run, and it was this module's own rule.*
+`forks_collapsed` was `len(paths) - len(families)` and reported **184 forks collapsed** where
+**one** file is a fork. `collapse_forks` drops a session with no steps *and* collapses a
+family, so the number was measuring two jobs at once — in the module whose header says a
+denominator must not narrow silently. "A corpus is mostly forks" is a believable sentence,
+which is why nothing about the output looked wrong; what caught it was checking a surprising
+number instead of recording it. Both refusals are now counted before the collapse and printed.
+
+*The numbers, and three of them corroborate figures reached another way.* `cli_probes` fires
+on **8** sessions — the same 8 as the per-hand machine-wide measurement in item 4, from a
+different denominator. `grounding.depth_tokens` peaks at **681,994**, against the "deepest
+session 682k" recorded when compaction was cut. `continuity.dropped_bytes` is 0 across all
+69. An independent route to a number already believed is the cheapest evidence a sweep can
+produce, and it is why these three are named.
+
+What is new, and what item 9 has been waiting for — base rates on the tiers that claim
+ground truth:
+
+| check | tier | fires |
+|---|---|---|
+| `sycophancy` | proof | 40/69 = 58% |
+| `partial_use` | proof | 27/69 = 39% |
+| `specification` | evidenced | 3/69 = 4% |
+| `rereads` | evidenced | 2/69 = 3% |
+| `producers`, `spill` | evidenced | 1/69 = 1% each |
+
+`sycophancy` at 58% is a **candidate count, not a finding** — the check ranks challenges for
+the judge and fires when it has any, which is why the judge exists. `partial_use` at 39% is
+the one to look at: a `proof` tier firing in two sessions of five is close to the roadmap's
+own line about a detector that fires in most sessions being a ranking rather than an alarm,
+and item 21 already found one false positive in it. Not acted on here — recorded, because a
+threshold moved on the strength of one user's corpus is what item 9 forbids.
+
+*One parameter turns out to be binding, not generous.* `sessions_compared` is **12 in all 69
+sessions** — `--siblings 12` saturates every time, so cross-session recall is bounded by the
+flag and not by the corpus, exactly as its help text claims and nothing had checked.
+
+*Costs and how it stays honest.* 4.7s for 255 files, because `_Memo` injects a cached loader
+and prefilter into `discover.siblings()` — the naive form calls the same function and reparses
+the sibling population per session, which is 24 GB of byte scanning and ~3,800 parses for a
+question needing 255 of each. Injecting into the shipping function rather than modelling it
+is the whole point; `collapse_forks` was extracted from `siblings()` for the same reason.
+
+*Nine mutations, each watched to fail, and one of them was a false green.* The renderer walk
+asserted `str(value) in block` and **passed with `p90` deleted from the renderer outright** —
+a block of small integers supplies a matching digit for free, so the assertion was checking
+that the block contains a number. Item 20's containment lesson, reproduced in the test
+written to honour item 19. Every stat is now pinned to its own label by regex.

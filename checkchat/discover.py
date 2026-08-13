@@ -27,6 +27,7 @@ import json
 import os
 import zlib
 from pathlib import Path
+from typing import Callable, Iterable
 
 from . import transcript
 
@@ -81,6 +82,14 @@ def all_transcripts() -> list[Path]:
     `transcripts()`. That answers "what else happened in this folder"; this answers "what
     else have I done", which is what a question whose payoff is a user-level skill is
     actually asking.
+
+    **Subagent logs are not sessions, and are excluded** — the harness writes them one level
+    deeper, at `projects/<dir>/<session-id>/subagents/agent-*.jsonl`, so the `*/*.jsonl`
+    glob leaves them out. On this machine that is 64 of 319 files. Counting them would
+    inflate every base rate and would let a subagent's own tool calls stand in as "another
+    session that probed `--help`". Said out loud because the exclusion was a property of the
+    glob's depth rather than of anything anyone decided, and a deliberate scope that only a
+    glob knows about is item 12's failure waiting for a new route.
     """
     return _newest_first((_claude_home() / "projects").glob("*/*.jsonl"))
 
@@ -90,12 +99,15 @@ def _newest_first(paths) -> list[Path]:
     return sorted(files, key=lambda f: f.stat().st_mtime, reverse=True)
 
 
-def _contains(path: Path, needle: bytes) -> bool:
+def contains_bytes(path: Path, needle: bytes) -> bool:
     """Whether the raw bytes hold `needle`, read in bounded chunks.
 
     Overlaps the chunk boundary by `len(needle) - 1`, because a needle straddling two
     reads would otherwise be missed — a silent false negative in a pre-filter, which is
     the kind that looks like a real zero.
+
+    Public because `sweep` memoises it: a corpus pass calls `siblings()` once per session,
+    which would otherwise rescan every file's raw bytes once per session.
     """
     if not needle:
         return True
@@ -141,6 +153,8 @@ def siblings(
     scope: str = "machine",
     contains: str | None = None,
     exclude_forks_of: transcript.Session | None = None,
+    loader: Callable[[Path], transcript.Session] = transcript.load,
+    prefilter: Callable[[Path, bytes], bool] = contains_bytes,
 ) -> list[transcript.Session]:
     """Other sessions to compare this one against, forks already collapsed.
 
@@ -170,6 +184,10 @@ def siblings(
     second cross-session check ever wants different data, this pre-filter will silently
     starve it, and that is the moment to make the requirement something a check declares
     rather than something `__main__` passes.
+
+    `loader` and `prefilter` exist so a corpus pass can call *this* function instead of a
+    corpus-wide model of it — the mistake `sweep`'s header is about. Their defaults are the
+    shipping behaviour; `sweep` injects memos, which changes cost and not semantics.
     """
     candidates = transcripts(cwd) if scope == "project" else all_transcripts()
     ex = Path(exclude).resolve() if exclude is not None else None
@@ -186,18 +204,34 @@ def siblings(
         # Excluded before `limit`, so the session under test does not eat a scan slot.
         if ex is not None and f.resolve() == ex:
             continue
-        if needle and not _contains(f, needle):
+        if needle and not prefilter(f, needle):
             continue
         chosen.append(f)
 
     mine = fingerprint(exclude_forks_of) if exclude_forks_of is not None else None
+    return collapse_forks((loader(f) for f in chosen), exclude_fp=mine)
+
+
+def collapse_forks(sessions: Iterable[transcript.Session],
+                   exclude_fp: str | None = None) -> list[transcript.Session]:
+    """One session per fork family — the longest, since it holds the shared history plus
+    whatever came after the split.
+
+    Extracted from `siblings()` when `sweep` needed it, and extracted rather than copied
+    for the reason in this module's header: ONE forked pair manufactured 100% of the
+    apparent cross-session CLI-probing signal in the development corpus, and a corpus pass
+    is where that mistake would scale. A second implementation of this is the last thing
+    this project should own.
+
+    `exclude_fp` drops a whole family rather than a file, which is what "not another
+    session" has to mean when resuming copies a prefix.
+    """
     keep: dict[str, transcript.Session] = {}
-    for f in chosen:
-        sess = transcript.load(f)
+    for sess in sessions:
         if not sess.steps:
             continue
         fp = fingerprint(sess)
-        if fp == mine:          # a fork of the session under test is not another session
+        if fp == exclude_fp:    # a fork of the session under test is not another session
             continue
         best = keep.get(fp)
         if best is None or len(sess.calls) > len(best.calls):

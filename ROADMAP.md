@@ -14,9 +14,10 @@ one shorter than it deserves.
 The plugin is **installed and working end-to-end** on this machine: `/check-chat` runs,
 the deterministic pass takes ~280ms (~86ms of it before item 4 made the cross-session
 comparison actually load other sessions; `--siblings 0` returns it to ~20ms), the judge
-dispatches by `subagent_type`, and the report comes back. 123 tests pass, in the project's
-**own** virtualenv (`.venv/bin/pytest` from the repo root). Open work below is ordered by
-whether it blocks someone other than the author.
+dispatches by `subagent_type`, and the report comes back. `--sweep` runs the same checks over
+the whole corpus in 4.7s. 128 tests pass, in the project's **own** virtualenv
+(`.venv/bin/pytest` from the repo root). Open work below is ordered by whether it blocks
+someone other than the author.
 
 Every item says how you would know it is finished. The rule the project is built on
 applies to this list too: **a detector that cannot be shown to fire on real transcripts
@@ -52,10 +53,11 @@ for `**<n>.` to find an entry.
 | 19+20 | 08-12 | The renderer seam is walked, not remembered; the label is declared in the registry |
 | 21 | 08-12 | A check's `specifics` reach the person required to quote them — and printing evidence found a `proof`-tier false positive |
 | 22 | 08-13 | `SKILL.md`'s rules are walked against the data that must satisfy them; the compaction seam depths were reaching nobody |
+| 23 | 08-13 | `--sweep`: the checks over the whole corpus, which is 69 sessions and not 319 files — and whose first find was its own conflated denominator |
 
 ---
 
-## Now — items 23 and 24, which are what 6, 7 and 9 were actually waiting for
+## Now — item 24, with item 23 shipped underneath it
 
 Item 22 closed the last hop a test can reach, and this section then said nothing unblocked
 was *found*, with 6, 7 and 9 filed against "transcripts from a different user" — the one
@@ -66,41 +68,36 @@ permanent only because they were assumed to arrive inside the conversations hold
 The conversations cannot travel; the measurement can. Read item 12's rule before touching
 these, item 13 before trusting a corpus sweep, 14 before adding anything to the excerpt.
 
-**23. `--sweep` — run the shipping checks across many transcripts in one process.**
-Thin by construction: `transcript.load(path)` and `checks.run` are public and take what a
-sweep has. What is missing is the entry point — `collect()` resolves a session by
-`(cwd, session_id)` through `discover.current`, so there is no way in from a bare path, and
-the 319 transcripts across 22 project directories here must be reached by one. ~80ms per
-session measured, stdlib only: a full pass is seconds.
+**Item 23 shipped 08-13 and changed the denominator of everything.** `--sweep` runs the
+checks over every session transcript on the machine. The corpus is **69 sessions**, not the
+"319 transcripts" this entry claimed: 64 of those files are subagent logs and 183 more have
+no assistant response at all. It also found its own `forks_collapsed` measuring two things at
+once, and it corroborated three numbers reached by hand. `HISTORY.md` has all of it. The
+base rates are now available to whoever asks; **`partial_use` fires at 39% on a `proof`
+tier**, which is the one worth a second look, and it must not be tuned here — item 9's rule.
 
-Its value is not speed. "Ways to get a false answer" below is the bill for measuring this
-corpus a dozen times by hand-rolled `find | xargs grep`: the recurring fix in that list is
-*import the function*, and two of its entries — `proof`'s truncated echo, the ledger's
-hand-rolled row format — are re-implementations that returned a plausible wrong number on the
-first run and were believed. This tool's headline finding is work a script should be doing,
-and this is the largest instance of it in its own repo.
-- *Done when:* a measurement in `HISTORY.md` cites a sweep rather than a grep, and the
-  aggregate is computed by calling the checks, with no second copy of their logic anywhere
-- *Not this:* a per-session report printed 319 times. The output is one aggregate; the
-  per-session JSON already exists for whoever wants it
+**24. Make the sweep's aggregate *declared* safe to send, then ask for one.**
+This entry was written before item 23 existed and its premise was wrong, which is worth
+leaving on the record: it said the aggregate carries "absolute paths, filenames, `specifics`
+rows quoting the conversation, `proof` command text and the excerpt itself". That is true of
+`collect()`'s output and false of the sweep's. Audited leaf by leaf: **42 string leaves, all
+42 a registry constant** — a check name, label, dimension or tier. Every other leaf is a
+number. No path, no command, no prose, because `_numeric` admits only `int`/`float` and the
+metadata copied is the registry's. So there is no redaction to write.
 
-**24. The share projection — the redacted aggregate a stranger can actually send.**
-Item 23's output cannot be sent as it stands: the JSON carries absolute paths, filenames,
-`specifics` rows quoting the conversation, `proof` command text and the excerpt itself. So
-this is a *projection* — the ninth instance of the seam this project has found eight times,
-with the direction inverted. `cli.TEXT_OMITS` fails when a field reaches **nobody**; a share
-manifest must fail when a field reaches **everybody**: the same walk over a producer's keys
-that items 19–22 built, default-deny rather than default-render, and the only instance of it
-where a miss is a harm and not a bug.
-
-The tool promises nothing leaves the machine, so it must not transmit: write a file, print
-exactly what is in it, let the person send it — opt-in, and auditable in full by whoever
-would be sending it.
-- *Done when:* a key added to a check's result reaches neither the file nor its audit until
-  it is declared — demonstrated by adding one and watching the walk fail, per item 19's rule
+What is left is that this safety is a *property of a filter*, not a contract. Nothing fails
+when someone widens `meta` or passes a string through, and that is the ninth instance of the
+seam this project has found eight times, with the direction inverted: `cli.TEXT_OMITS` fails
+when a field reaches **nobody**, and this must fail when a field reaches **everybody** — the
+same walk over a producer's keys, default-deny instead of default-render, and the only
+instance where a miss is a harm and not a bug.
+- *Done when:* a string leaf that is not a registry constant fails a test, demonstrated by
+  adding one and watching it fail. Numbers stay allowed — a count about a session is not
+  content from it — but say so, and say that a one-session sweep is contentless rather than
+  anonymous, since its distributions are that session's own values
 - *Then, and it is the part with no code in it:* a README section and an issue template that
-  say *run this, paste this*. Without the ask, 23 and 24 produce nothing and item 9 stays
-  exactly where it is — that is who has to act, named as item 10's rule requires
+  say *run `--sweep`, paste the JSON*. Without the ask this produces nothing and item 9 stays
+  where it is — that is who has to act, named as item 10's rule requires
 
 **What item 22 did not close.** The walks check that a field the skill names exists, and that
 a number it hands the user is printed where a person reads. They cannot check that a rule's

@@ -26,8 +26,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from checkchat import (  # noqa: E402
-    checks, detect, digest, discover, effort, specification, sycophancy, transcript,
-    verdict,
+    checks, detect, digest, discover, effort, specification, sweep, sycophancy,
+    transcript, verdict,
 )
 from checkchat import __main__ as cli  # noqa: E402
 
@@ -1746,15 +1746,15 @@ def test_the_scan_budget_is_spent_on_transcripts_that_could_match(tmp_path, monk
 def test_a_needle_straddling_a_read_boundary_is_still_found(tmp_path):
     """A pre-filter's false negative looks exactly like a real zero, so it gets a test.
 
-    `_contains` reads in 1 MB chunks; a needle split across two of them is missed unless
+    `contains_bytes` reads in 1 MB chunks; a needle split across two of them is missed unless
     the boundary is overlapped. That is the same class of error as the roadmap's "do not
     glue lines together", inverted.
     """
     p = tmp_path / "straddle.jsonl"
     chunk = 1 << 20
     p.write_bytes(b"x" * (chunk - 3) + b"--help" + b"y" * 10)
-    assert discover._contains(p, b"--help") is True
-    assert discover._contains(p, b"--nope") is False
+    assert discover.contains_bytes(p, b"--help") is True
+    assert discover.contains_bytes(p, b"--nope") is False
 
 
 # --------------------------------------------- what counts as a probed command
@@ -2578,3 +2578,157 @@ def test_the_two_filenames_the_skill_hands_the_judge_are_the_ones_emit_writes(tm
     assert {p.name for p in out.iterdir()} == SKILL_EMIT_FILES
     for name in SKILL_EMIT_FILES:
         assert f"`{name}`" in _skill_prose(), f"{name} is written and the skill never names it"
+
+
+# ------------------------------------------------------- item 23: the corpus pass
+#
+# `sweep` is a new *producer*, which is the thing this project has got wrong eight times, so
+# it arrives with a walk over its own output rather than with the three numbers someone
+# wanted. The first test here is a regression test for a defect the module had while its own
+# docstring forbade it: `collapse_forks` drops a session with no steps *and* collapses a
+# family, so `len(paths) - len(families)` reported 184 forks collapsed on the real corpus
+# where exactly one file is a fork and 183 have no assistant response at all.
+
+def _corpus(tmp_path, monkeypatch):
+    """A synthetic `~/.claude/projects` holding one of each thing the sweep must tell apart.
+
+    The fork pair is the fiddly one and the fiddliness is a real property: `fingerprint`
+    seeds on `calls[:10]`, so two logs are one family only when their first *ten* tool
+    inputs agree. A three-call "fork" would be a different fingerprint and would silently
+    test nothing — which is why the prefix here is ten long and shared exactly.
+    """
+    d = tmp_path / "projects" / "-repo"
+    d.mkdir(parents=True, exist_ok=True)
+    prefix = [_asst("", calls=[(f"t{i}", "Read", {"file_path": f"/repo/{i}.py"})], req=f"r{i}")
+              for i in range(10)]
+
+    write(d, [_human("do the thing"), *prefix,
+              _asst("", calls=[("x1", "Read", {"file_path": "/repo/extra.py"})], req="rx"),
+              _asst("done", req="rz")], name="long.jsonl")
+    write(d, [_human("do the thing"), *prefix], name="fork.jsonl")
+    write(d, [_human("only a human, nothing answered")], name="noresponse.jsonl")
+    write(d, [_asst("a summary record and no human turn", req="q1")], name="noturn.jsonl")
+
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+    return d
+
+
+def test_the_sweep_counts_its_two_refusals_apart_from_its_forks(tmp_path, monkeypatch):
+    """The defect this module shipped for one run, as a control that can see it.
+
+    Every one of these four numbers has to be separately right, and the bug made two of them
+    wrong in a way that looked plausible: a corpus is mostly forks (185 of 255!) is a
+    believable sentence, which is why nothing about the first output looked wrong.
+    """
+    _corpus(tmp_path, monkeypatch)
+    s = sweep.run()
+    f = s["files"]
+
+    assert f["found"] == 4, "all four are non-empty files the glob should see"
+    assert f["with_responses"] == 3, "one file holds a human turn and no assistant record"
+    assert f["refused"]["no_responses"] == 1
+    assert f["refused"]["no_human_turn"] == 1, "the item 16 refusal, applied to a corpus"
+    assert f["forks_collapsed"] == 1, (
+        "exactly one file is a fork; if this counts the response-less file too, the number "
+        "is measuring `collapse_forks`'s two jobs at once — the shipped bug")
+    assert f["families"] == 2, "the fork pair and the turnless log are two distinct histories"
+    assert s["sessions"] == 1, "the denominator is what `collect()` would agree to report on"
+
+
+def test_the_fork_the_sweep_keeps_is_the_longer_one(tmp_path, monkeypatch):
+    """Which member survives decides every count downstream, and the wrong choice is quiet:
+    both members are real files with real history, so keeping the stub loses the calls that
+    came after the split without losing the session."""
+    _corpus(tmp_path, monkeypatch)
+    kept = discover.collapse_forks(
+        [transcript.load(p) for p in discover.all_transcripts()])
+    families = {Path(s.path).name: len(s.calls) for s in kept}
+
+    assert "long.jsonl" in families, "the longer member of the family is the one with history"
+    assert "fork.jsonl" not in families
+    assert families["long.jsonl"] == 11
+
+
+def test_every_number_the_sweep_computes_reaches_its_renderer(tmp_path, monkeypatch):
+    """Item 19's rule, applied to a producer written after item 19 — which is the only real
+    test of whether the rule survived being written down.
+
+    Values, not key names: this renderer prints `swept 3 sessions` rather than `sessions`,
+    so a key-name walk would pass on a renderer that printed nothing but labels. Per-check
+    values are looked for inside that check's *own* block, because the file is full of small
+    integers and a global search would be satisfied by any of them — the same residual limit
+    item 22 records for its reachability half, and the reason there is no omission list here:
+    nothing this producer computes is worth not printing.
+    """
+    _corpus(tmp_path, monkeypatch)
+    s = sweep.run()
+    text = sweep.render(s)
+    head, blocks = text.split("\n\n", 1)
+
+    for key, value in s["files"].items():
+        if key == "refused":
+            for reason, n in value.items():
+                assert f"{reason} {n}" in head, f"refusal {reason} is computed and unprinted"
+        elif key == "limit" and not value:
+            continue                        # an unset cap prints as its absence, below
+        else:
+            assert str(value) in head, f"files.{key} = {value} reaches no reader"
+    for key in ("sessions", "siblings"):
+        assert str(s[key]) in head, f"{key} is computed and unprinted"
+    assert f"{s['elapsed_ms']}ms" in head
+
+    body = "\n" + blocks
+    starts = {name: body.index(f"\n{name} ") for name in s["checks"]}
+    for name, c in s["checks"].items():
+        later = [at for at in starts.values() if at > starts[name]]
+        block = body[starts[name]:min(later)] if later else body[starts[name]:]
+        assert str(c["fired"]) in block, f"{name}'s firing count reaches no reader"
+        assert c["label"] in block and c["dimension"] in block and c["evidence"] in block
+        for field, stats in c["fields"].items():
+            assert field in block, f"{name}.{field} is summarised and never printed"
+            for stat, value in stats.items():
+                # Pinned to its *label*, not loose in the block. `str(value) in block` passed
+                # with `p90` deleted from the renderer outright — a corpus of small integers
+                # supplies a matching digit somewhere for free, so the loose assertion was
+                # checking that the block contains a number. Item 20's lesson, arriving in
+                # the test written to honour item 19.
+                pattern = (rf"/\s*{re.escape(str(value))}\b" if stat == "n"
+                           else rf"\b{stat}\s+{re.escape(str(value))}\b")
+                assert re.search(pattern, block), \
+                    f"{name}.{field}.{stat} = {value} is not printed beside its own label"
+
+
+def test_a_check_registered_today_is_swept_with_no_edit_to_the_sweep(tmp_path, monkeypatch):
+    """The "no second copy of their logic" invariant, as something that can fail.
+
+    A sweep that named its checks would pass every other test in this file and silently
+    stop covering the registry the moment one was added — which is how the text renderer's
+    hardcoded dimension list got in, one seam over.
+    """
+    _corpus(tmp_path, monkeypatch)
+    monkeypatch.setitem(
+        checks.REGISTRY, "invented",
+        checks.Check("invented", "opportunity", "does a new check appear?", "descriptive",
+                     lambda ctx: {"fired": True, "widgets": 7, "summary": "7 widgets"},
+                     "invented"))
+    s = sweep.run()
+
+    assert "invented" in s["checks"], "the sweep walks the registry, or it walks a memory"
+    assert s["checks"]["invented"]["fired"] == 1
+    assert s["checks"]["invented"]["fields"]["widgets"]["max"] == 7, \
+        "a numeric field is summarised generically, with no per-check knowledge anywhere"
+    assert "widgets" in sweep.render(s)
+
+
+def test_the_sweep_says_when_it_looked_at_only_part_of_the_corpus(tmp_path, monkeypatch):
+    """A cap that does not say so reads as "that was the whole corpus" — the confident wrong
+    number this project keeps finding in its own output. `LEDGER_ROWS` states its cut in the
+    table for the same reason."""
+    _corpus(tmp_path, monkeypatch)
+    s = sweep.run(limit=1)
+
+    assert s["files"]["found"] == 4, "what exists is reported even when it is not read"
+    assert s["files"]["considered"] == 1 and s["files"]["limit"] == 1
+    assert "limit 1" in sweep.render(s), "the cap is in the output a person reads"
+    assert "limit" not in sweep.render(sweep.run()), \
+        "and absent when there was none, so its presence means something"
