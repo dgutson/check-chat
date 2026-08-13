@@ -1298,6 +1298,44 @@ def test_an_unfired_check_keeps_its_rows_to_itself(tmp_path, monkeypatch):
     assert not [ln for ln in cli._text(d).splitlines() if ln.startswith("    - ")]
 
 
+# -------------------------------------------------------- the roadmap's own budget
+#
+# The only test here about a document, and it is here because the document is loaded into a
+# model's context at the start of every session that touches this project. `ROADMAP.md` grew
+# to 1,210 lines and ~23k tokens, of which **63% was settled history**: finishing an item did
+# not shorten the file, it converted a 22-line pending entry into a 76-line historical one, so
+# the cost of choosing the next task rose with every task completed.
+#
+# A note saying "keep it short" is the fourth note of that kind this project has written, and
+# the first three all failed. This is the mechanism instead.
+
+DOCS = Path(__file__).resolve().parent.parent
+ROADMAP_LINES, ROADMAP_BYTES = 420, 34_000
+
+
+def test_the_roadmap_stays_inside_the_budget_that_makes_it_readable():
+    """Both dimensions, because they drift apart: many short lines and few long ones cost the
+    same context and only one of them looks big."""
+    text = (DOCS / "ROADMAP.md").read_text()
+    lines, size = len(text.splitlines()), len(text.encode())
+    fix = ("move a finished item's detail to HISTORY.md and leave its one-line row in the "
+           "Shipped table — do not fix this by writing the next entry shorter than the "
+           "evidence deserves, which is the failure the budget exists to prevent")
+    assert lines <= ROADMAP_LINES, f"ROADMAP.md is {lines} lines (budget {ROADMAP_LINES}): {fix}"
+    assert size <= ROADMAP_BYTES, f"ROADMAP.md is {size} bytes (budget {ROADMAP_BYTES}): {fix}"
+
+
+def test_the_history_it_was_split_into_is_still_reachable():
+    """A budget met by deleting the evidence would be worse than the file being long, so the
+    other half has to exist and the roadmap has to point at it."""
+    history = DOCS / "HISTORY.md"
+    assert history.is_file(), "HISTORY.md is where the roadmap's detail went; it must exist"
+    assert "HISTORY.md" in (DOCS / "ROADMAP.md").read_text(), \
+        "the roadmap must say where the detail went, or the split hides it instead of moving it"
+    assert len(history.read_text()) > len((DOCS / "ROADMAP.md").read_text()), \
+        "the detail is meant to be in HISTORY.md — if it is the smaller file, something was cut"
+
+
 # ------------------------------------------------------------------ blinding
 
 def test_digest_is_blinded(tmp_path):

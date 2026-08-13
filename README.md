@@ -16,8 +16,9 @@ Then it gives you a corrective prompt you can apply immediately or paste yoursel
 — only when the evidence is specific and nothing already covers it — a prompt to build
 the skill or plugin that would stop the waste recurring.
 
-What is done, what is next, and what was deliberately *not* built and why:
-[ROADMAP.md](ROADMAP.md).
+What is next, and what was deliberately *not* built and why: [ROADMAP.md](ROADMAP.md).
+How each finished item got that way — what was measured, and what the filing got wrong:
+[HISTORY.md](HISTORY.md).
 
 ## Install
 

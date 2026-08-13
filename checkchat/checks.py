@@ -93,11 +93,14 @@ LABEL_WIDTH = 10
 # line and nothing else — the rule and its evidence on opposite sides of a wall. So a check
 # may return `specifics`: rows a person can quote verbatim, one per finding.
 #
-# Capped here rather than in each check, and the cap is **stated in the output**: a payload
-# is unbounded (`dumps` alone ranks every large call in the session) and a silent truncation
-# would read as "that was all of it", which is the confident-zero failure this project keeps
-# finding in its own reports. Both numbers were set by measuring the shipping function over
-# 200 real transcripts — see the ROADMAP entry for item 21 for what they cost.
+# Capped here rather than in each check, and the cap is **stated in the output**, because a
+# silent truncation reads as "that was all of it" — the confident total this project keeps
+# finding in its own reports. The cap is not protection against a runaway payload, which is
+# what item 21 assumed until it measured: `detect.dumps` already takes `top=5` and three
+# other detectors slice `[:5]`, so only `producers`, `spill` and `partial_use` are uncapped,
+# at measured maxima of 2, 1 and 6. It is a choice about how much a reader needs in order to
+# quote something, and it is defensible only because the cut is printed. Set by measuring the
+# shipping renderer over the corpus — `HISTORY.md`, item 21, for the numbers.
 SPECIFIC_ROWS = 3
 SPECIFIC_WIDTH = 160
 
