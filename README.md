@@ -116,7 +116,7 @@ A check is one module and one decorator. Nothing else *must* change — the CLI 
 the registry and the skill reports a check from its declared `evidence` level without
 being edited.
 
-Two honest caveats, because an earlier version of this paragraph overstated it and the
+Three honest caveats, because an earlier version of this paragraph overstated it and the
 overstatement survived two real bugs before anyone noticed:
 
 - A check introducing a **new dimension** sorts last in the text renderer until you add
@@ -124,6 +124,11 @@ overstatement survived two real bugs before anyone noticed:
   and that is now a test rather than a promise.
 - The skill's dimension-3 section names specific checks in a "lead with these" order.
   A new check is still reported without touching it, just not in that priority list.
+- A check declaring a **new `evidence` tier** does need `SKILL.md` edited: the tier table
+  is what tells a reporter how loudly to report a check the document has never heard of,
+  so a tier with no row leaves it with no instruction. A test fails until the row exists.
+  The same test fails if you name a field of yours in `SKILL.md` without saying where it
+  lives — see "the last hop" in the tests.
 
 ```python
 # checkchat/mycheck.py

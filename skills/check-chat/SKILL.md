@@ -170,7 +170,7 @@ check's `dimension`, and let its `evidence` field decide how loudly you report i
 
 | `evidence` | How to report it |
 |---|---|
-| `caveat` | Qualifies every other number. **Say it first, above the dimensions**, in one line — then report the rest normally. |
+| `caveat` | Qualifies every other number. **Say it first, above the dimensions**, in a line plus any rows it printed — then report the rest normally. |
 | `proof` | Carries its own ground truth. **Lead with it.** |
 | `evidenced` | Rare and unambiguous. Report with the specifics quoted. |
 | `ranked` | Fires in most sessions and cannot discriminate. **Ranked table, never a verdict.** |
@@ -251,7 +251,10 @@ and it is the only caveat that does:
   `should_restart`, however high that item scored.
 - `seams` gives each seam's `trigger` and `pre_tokens`, and `depth_before`/`depth_after`
   say how much context was dropped. Those numbers are for the user; the judge never sees
-  them.
+  them. They print as indented rows under the `compaction` line — one per seam — so quote
+  those rather than re-deriving anything, exactly as for every other fired check. This is
+  the one caveat that gets more than a line, because "the window filled" is a claim the
+  user can only act on with the size of the loss attached.
 
 ### `other_findings` — the one thing no check can see
 

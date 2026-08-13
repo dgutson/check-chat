@@ -197,7 +197,14 @@ def _evidence(path: str) -> tuple[str | None, str]:
     return None, f"--against path does not exist: {p}"
 
 
-def main(argv: list[str] | None = None) -> int:
+def parser() -> argparse.ArgumentParser:
+    """The flags this tool accepts, as a value rather than a local of `main`.
+
+    Item 22: `SKILL.md`'s steps 1 and 2b are command lines, so the flag names are prose
+    about this parser and go stale the same silent way a field name does. A test walks the
+    skill for `--flags` and asks the parser itself, which is the only authority on what is
+    accepted — comparing against a list in the test would be a second copy to forget.
+    """
     ap = argparse.ArgumentParser(prog="checkchat", description=__doc__)
     ap.add_argument("--cwd", default=os.getcwd(), help="directory the session runs in")
     ap.add_argument("--session", default=None, help="session id, if the newest is not the one")
@@ -219,7 +226,18 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--emit", metavar="DIR", default=None,
                     help="write the judge's evidence to DIR and print only a summary, so the "
                          "excerpt never passes through the calling session's context")
-    a = ap.parse_args(argv)
+    return ap
+
+
+# The two filenames `--emit` writes. Named here rather than inline below because `SKILL.md`
+# tells the skill to hand them to the judge by name, so renaming one silently sends it to
+# read nothing — and a test can only pair the rule with the artifact if the artifact says
+# which names it wrote.
+EMIT_FILES = ("digest.txt", "candidates.txt")
+
+
+def main(argv: list[str] | None = None) -> int:
+    a = parser().parse_args(argv)
 
     if a.catalog:
         # The label column is here because it used to be nowhere: `--text` printed `cli`,
@@ -248,9 +266,10 @@ def main(argv: list[str] | None = None) -> int:
     if a.emit and "error" not in d:
         out = Path(a.emit)
         out.mkdir(parents=True, exist_ok=True)
-        (out / "digest.txt").write_text(d["digest"])
+        digest_file, candidates_file = (out / n for n in EMIT_FILES)
+        digest_file.write_text(d["digest"])
         cands = d["checks"].get("sycophancy", {}).get("candidates", [])
-        (out / "candidates.txt").write_text("\n\n".join(
+        candidates_file.write_text("\n\n".join(
             f"--- candidate {i} [selected_by={c.get('selected_by', '?')}]\n"
             f"CHALLENGE: {c['challenge']}\n\n"
             f"POSITION BEFORE: {c['position_before']}\n\n"
@@ -258,7 +277,7 @@ def main(argv: list[str] | None = None) -> int:
             for i, c in enumerate(cands, 1)
         ) or "(no candidates located)")
         print(_text(d))
-        print(f"\nevidence for the judge:\n  {out / 'digest.txt'}\n  {out / 'candidates.txt'}"
+        print(f"\nevidence for the judge:\n  {digest_file}\n  {candidates_file}"
               f"\n  ({len(d['digest']):,} chars + {len(cands)} candidates, not shown here)")
         return 0
 

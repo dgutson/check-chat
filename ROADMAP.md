@@ -1,6 +1,6 @@
 # Roadmap
 
-State as of 2026-08-12. Published. Written so a session with no memory of how this got here
+State as of 2026-08-13. Published. Written so a session with no memory of how this got here
 can pick it up — **read this file, not `HISTORY.md`.**
 
 *This file is what is not done, plus the rules that stop it being done badly.* Finished items
@@ -15,7 +15,7 @@ never to write the next one shorter than it deserves.
 The plugin is **installed and working end-to-end** on this machine: `/check-chat` runs,
 the deterministic pass takes ~280ms (~86ms of it before item 4 made the cross-session
 comparison actually load other sessions; `--siblings 0` returns it to ~20ms), the judge
-dispatches by `subagent_type`, and the report comes back. 112 tests pass, in the project's
+dispatches by `subagent_type`, and the report comes back. 123 tests pass, in the project's
 **own** virtualenv (`.venv/bin/pytest` from the repo root). Open work below is ordered by
 whether it blocks someone other than the author.
 
@@ -52,39 +52,28 @@ for `**<n>.` to find an entry.
 | 18 | 08-12 | A judge `1` renders as the single read it is — `tier`, `weak` |
 | 19+20 | 08-12 | The renderer seam is walked, not remembered; the label is declared in the registry |
 | 21 | 08-12 | A check's `specifics` reach the person required to quote them — and printing evidence found a `proof`-tier false positive |
+| 22 | 08-13 | `SKILL.md`'s rules are walked against the data that must satisfy them; the compaction seam depths were reaching nobody |
 
 ---
 
-## Now — the rules and the artifacts, which is the pair nothing checks
+## Now — nothing unblocked is *found*, and the sentence below says what that is worth
 
-**22. Audit every rule in `SKILL.md` against the artifact that has to satisfy it, and then
-mechanise the audit.** Kind 4 is found only by pairing a *requirement* with the *data that
-would meet it*, and that question has now been asked exactly twice — of `capabilities`
-("is plugin-finder installed?" was a branch with no input) and of the quoting rule (item 21).
-It found a defect **both times**. There is no reason to think the third asking is different,
-and the skill is 460 lines of rules.
-- *What to build, and the second half is the point:* first the pass by hand, rule by rule,
-  asking what datum each needs and whether it arrives in the artifact the skill is told to
-  read. Then the mechanism — **a test that walks `SKILL.md` for the fields it names in
-  backticks (`capabilities.plugin_finder`, `checks.<name>.specifics`, `dropped_bytes`,
-  `warnings`) and asserts each one exists in a real `collect()` output.** That closes kind 4
-  the way item 19's walks closed kind 3: the document and the data stop drifting silently.
-- *Why the mechanism is worth more than the pass:* the pass finds today's defects, and every
-  edit to either side can reintroduce one. `SKILL.md` is the only file here that is *prose
-  about data*, so it is the only one where a rename in `collect()` breaks a reader with no
-  error anywhere.
-- *The known limit, stated up front:* a walk can check that a named field **exists**, never
-  that the rule's *meaning* is satisfied. "Quote the caveat's warnings rather than
-  paraphrasing" is checkable; "report only what fired" is not. Expect the mechanism to cover
-  the references and leave the reasoning to the pass.
-- *How you would know it is finished:* renaming a field in `collect()` fails a test that names
-  `SKILL.md`, rather than being discovered by a skill quietly reporting nothing.
+Item 22 closed the last hop a test can reach. What remains is items 6, 7 and 9, blocked on
+transcripts from a *different user* — the one kind of input that cannot be manufactured, and
+worth contrasting with item 10, whose blocker was misfiled as a wait for a year's worth of
+luck when it was twenty minutes of work. Read item 12's rule before touching any of them,
+item 13 before trusting a corpus sweep, and item 14 before adding anything else to the
+excerpt.
 
-What remains beyond item 22 is items 6, 7 and 9, blocked on transcripts from a *different
-user* — the one kind of input that cannot be manufactured, and worth contrasting with item 10,
-whose blocker was misfiled as a wait for a year's worth of luck when it was twenty minutes of
-work. Read item 12's rule before touching any of them, item 13 before trusting a corpus sweep,
-and item 14 before adding anything else to the excerpt.
+**What item 22 did not close, so the next session does not mistake a green suite for a
+finished question.** The walks check that a field the skill names exists, and that a number
+the skill hands the user is printed in the block a person reads. They cannot check that a
+rule's *meaning* is satisfied: "quote the caveat's `warnings` rather than paraphrasing" is
+checkable, "report only what fired" is not. And the hop past `--text` — the report a model
+composes from these rules — has no mechanism at all and is not going to get one. **So the
+pass by hand is still the only thing that finds a kind 4, and item 22's mechanism only stops
+the ones it already found from coming back.** It found one on its third asking, having found
+one on each of the first two.
 
 **How the defects have sorted so far, because it is what predicts the next one.** Four kinds,
 and this list only ever enumerated the first:
@@ -94,13 +83,16 @@ and this list only ever enumerated the first:
    output was fit to hand a judge except `collect`.
 3. **Everything right and the *presentation* wrong** — items 16, 17, 18, and the four that
    item 19's walks found within an hour of existing.
-4. **Everything right and printed, and the *consumer* never given it** — item 21, with
-   `capabilities` an hour earlier. No renderer is wrong; there is no renderer at all.
+4. **Everything right and printed, and the *consumer* never given it** — items 21 and 22,
+   with `capabilities` an hour before the first. No renderer is wrong; there is no renderer
+   at all.
 
-Kinds 2, 3 and 4 are one defect at increasing distance — excerpt, renderer, consumer. So the
-question to ask when this section next reads "nothing" is **"how far does a number travel
-before someone acts on it, and what checks each hop?"** Three hops now have a walk. The last
-ends in prose that a model reads, which is where the mechanism runs out and item 22 starts.
+Kinds 2, 3 and 4 are one defect at increasing distance — excerpt, renderer, consumer. The
+question this section said to ask was **"how far does a number travel before someone acts on
+it, and what checks each hop?"** All four hops now have a walk, and the fifth is prose a
+model writes, where the mechanism stops. Kind 4 has now been found three times for three
+askings, so the honest reading of "nothing found" here is *nobody has asked a fifth question
+yet*, not *there is nothing left*.
 
 **"Nothing" here can only ever mean "nothing *found*".** As a claim about the code it has been
 false every time it was checkable: written in `dda7bbe` while `rereads` was miscounting 71% of
@@ -177,9 +169,12 @@ measurements that cut it, and the recipe that unblocked it are in `HISTORY.md`.
   since a judge reply reaches a person through `verdict.render`. Item 19 mechanised it in the
   only form that survives being forgotten: a walk over the producer, and a declaration naming
   the renderer for anything deliberately unprinted. Item 21 extended it to a check's payload,
-  which now prints under the check that found it. What no walk reaches is the last hop —
-  `SKILL.md`'s prose and the report a model writes from it — so "which renderer does a person
-  read *this* data in" is still asked by hand there, and item 22 is how far a test can follow.
+  which now prints under the check that found it. Item 22 took it one hop further, to
+  `SKILL.md`'s prose: a field the skill names must resolve in real data, and a number it hands
+  the user must appear in the block a person reads — which is how the `compaction` seam depths
+  turned out to be the eighth leak. What no walk reaches is the hop after that, the report a
+  model composes from these rules, so "which renderer does a person read *this* data in" is
+  still asked by hand there and always will be.
 - **Every check that reads a Bash command has to mean the code, not the text — and the two
   that got it wrong were found a month apart.** `cli_probes` (item 13) and `partial_use`
   (found by item 21) both scanned the whole `command` parameter, so a commit message or an
@@ -199,6 +194,17 @@ measurements that cut it, and the recipe that unblocked it are in `HISTORY.md`.
   truth, so recall is the thing it is allowed to lose. Unmeasured on the corpus — no
   quoted-path proof appeared in the 48 examined, but that is a small sample of one user's
   quoting habits.
+- **The `SKILL.md` walk resolves by declared path, and that declaration is its soft spot.**
+  Item 22's tokeniser finds what the skill names in backticks; a dict says where each one
+  lives, and `SKILL_NOT_DATA` says which are not data at all. Both are silencing surfaces of
+  exactly the `TEXT_OMITS` kind — an entry ends the walk's interest in a token permanently.
+  Declared paths rather than bare leaf names on purpose: `max` in `SKILL.md` is a
+  reasoning-effort *setting* and matches `checks.batching.max`, so a leaf-name walk would
+  have resolved it against an unrelated field and passed for a reason with nothing to do with
+  the claim — item 20's containment bug by a new route. The residual limit is the reachability
+  half: a check's `line` is a string the check composed, so the value can only be looked for
+  as a substring inside that check's own block, and a single-digit value can still be matched
+  by an unrelated digit there.
 - **A declared omission is a hole the mechanism cannot see into.** `cli.TEXT_OMITS` is what
   keeps the walk honest, and it is also the way to silence it: an entry there ends the test's
   interest in a key permanently. The guards are thin on purpose — the reason must be non-empty
@@ -361,6 +367,20 @@ Each cost a full re-run to discover, so they are recorded here rather than relea
   reported as "the invariant is not enforced" when the code under test had not changed at all.
   Same family as the entry below: when a mutation does not fail, suspect the mutation before
   the test, and confirm the mutated code actually differs.
+- **A length-preserving mutation can be invisible to the interpreter.** Item 22's seven
+  mutations ran in well under a second, and renaming `--against` to `--compare` in the parser
+  left the test **green**: Python validates a `.pyc` on the source's size and its mtime
+  *truncated to the second*, and `against` → `compare` changes neither. The test was correct
+  and was run against stale bytecode. It is the same shape as the two entries below — a
+  mutation that did not do what it looked like — but it is not in the source at all, so
+  inspecting the diff cannot find it. When mutation-testing in a loop, clear `__pycache__`
+  and set `PYTHONDONTWRITEBYTECODE=1`; both, because the second alone leaves earlier runs'
+  caches in place.
+- **`[] or [rows]` is `[rows]`.** The same run's attempt to empty a check's `specifics` by
+  prefixing `[] or` reported a false **OK** — it changed the file, so the "did the mutation
+  change anything?" guard passed, and it changed nothing about the value. Third member of
+  the family below, and the reason the guard is now "confirm the mutation changed the
+  shipping *output*", asserted by importing the function and looking at what it returns.
 - **A mutation that errors is not a mutation that failed.** Breaking `Verdict` to prove the
   field-walk catches a new field produced `1 error` at collection time, not `1 failed` —
   the injected line had a literal `\n` in it and the module would not parse, so *every* test

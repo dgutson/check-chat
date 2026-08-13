@@ -322,7 +322,28 @@ def _continuity(ctx):
 @register("compaction", "context", evidence="caveat",
           question="Was the conversation's own history replaced by a summary while it ran?")
 def _compaction(ctx):
-    return {**detect.compaction(ctx.session)}
+    c = detect.compaction(ctx.session)
+    # Item 22, and it is item 21 one tier down. `SKILL.md` tells the reporter that
+    # `depth_before`/`depth_after` "say how much context was dropped" and that "those numbers
+    # are for the user" — while the only artifact the skill is told to read carried the
+    # trigger and `pre_tokens` (inside the warning prose) and neither depth. Computed on
+    # every compacted session, printed nowhere a person reads.
+    #
+    # A seam is one row because the numbers only mean anything paired: 100,212 -> 26,146 is
+    # the loss, and either figure alone is just a context size. `None` prints as "not
+    # measured" rather than as a number or a zero, for the reason `detect.compaction` chose
+    # `None` in the first place — an unmeasured side of a seam must not read as an empty one.
+    def depth(r):
+        b, a = r["depth_before"], r["depth_after"]
+        if b is not None and a is not None:
+            return f"depth {b:,} → {a:,} tok ({b - a:,} dropped)"
+        side = f"depth before {b:,} tok" if b is not None else f"depth after {a:,} tok"
+        return f"{side}, the other side not measured (no response on it)"
+
+    return {**c, "specifics": [
+        f"seam {i} at turn {r['turn']} ({r['trigger']}, compacted at {r['pre_tokens']:,} tok) "
+        f"— {depth(r)}; {r['preserved_messages']} messages kept"
+        for i, r in enumerate(c.get("seams", []), 1)]}
 
 
 @register("failures", "context", evidence="raw",

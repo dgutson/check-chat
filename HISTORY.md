@@ -785,6 +785,67 @@ recorded under "ways to get a false answer". The `None` case was found by the te
 by review: `str(None)` is `"None"`, so a `None` row printed as a line of evidence reading
 *None* under a finding. 7 tests, 112 total.
 
+**22. `SKILL.md`'s rules walked against the data that has to satisfy them** — the pass by
+hand, then the mechanism, closing kind 4 as far as a test can reach.
+
+*The pass, and what it found.* Rule by rule, asking what datum each needs and whether it
+arrives in the artifact the skill is told to read. One defect, and it is item 21 one tier
+down. `SKILL.md`'s caveats section says of the compaction seams: "`depth_before`/`depth_after`
+say how much context was dropped. **Those numbers are for the user**". Step 1 tells the skill
+to read the `--emit` summary and forbids it the raw JSON — and `compaction` returned **no
+`specifics` at all**, while its `line` carried the trigger and `pre_tokens` inside the warning
+prose and neither depth. Computed on every compacted session since item 10, printed nowhere a
+person reads. `compaction` now emits one row per seam with all four numbers, and a seam whose
+other side has no response prints "not measured" rather than a zero, because
+`detect.compaction` chose `None` there deliberately and a zero would read as "the context
+dropped to nothing".
+
+Three rules were checked and found **already satisfied**, which is worth recording because a
+pass that only reports finds looks like a pass that only looked at finds: the evidence-tier
+table has a row for every tier the registry declares; all six `verdict.ITEMS` are named in the
+prose; and `TEXT_OMITS`'s unverified claim that "the `continuity` check's line states
+`dropped_bytes` with its magnitude" is **true** — it renders as MB, which is the datum arriving
+in the unit a person reads.
+
+*The mechanism, in six walks.* Every identifier-shaped token the skill names in backticks
+must resolve to a declared path in a real `collect()` output, or to a **validated** `Verdict`,
+or be declared not-data with a reason; every number the skill hands the *user* must appear in
+the rendered block a person reads; every literal its two action tables key on — `quotes: NOT
+CHECKED`, `RETRY HINT`, the weak hedge — must be a string `verdict.render` really emits, since
+a reworded line leaves an instruction that reads as sound and matches nothing; the tier table
+must cover every tier a check can declare; every scored item must be named; and every `--flag`
+must be one the shipping parser accepts, which is why `parser()` is now a function rather than
+a local of `main`. The fixture is the
+interesting part: four of the numbers live in `checks.compaction.seams[]`, **empty in a clean
+session**, so the walk runs on a merged output built from a session per check — item 21's
+"name the state in which the wrong behaviour would be visible" applied to a walk's input
+rather than to a control.
+
+*Two design decisions that were forced, and both are recorded as traps in `ROADMAP.md`.* The
+tokeniser strips fenced blocks and forbids a newline inside a match, because `` `[^`]+` `` over
+the whole file pairs one fence with the next and returns **zero** tokens — the first run of
+this walk reported a clean sweep of nothing. And resolution is by *declared path*, never by
+bare leaf name: `max` in `SKILL.md` is a reasoning-effort setting and matched
+`checks.batching.max`, so a leaf-name walk would have passed for a reason unrelated to the
+claim. The reachability half can only be a substring search inside the owning check's own
+block, since a `line` is a string the check composed and item 19's flip-the-value probe cannot
+reach it.
+
+11 mutations, each watched to fail — 2 only after the harness was corrected, and both
+corrections are new entries under "ways to get a false answer". One was a false **green**:
+`--against` → `--compare` is length-preserving, so Python reused a `.pyc` whose recorded source
+size matched and whose mtime differed by under a second, and a correct test ran against the
+unmutated parser. The other was a false **OK**: `"specifics": [] or [...]` changed the file and
+changed nothing about the value, so the "did the mutation change anything?" guard passed. The
+guard is now "confirm the mutation changed the shipping *output*". 8 tests, 123 total.
+
+*One gap was found in the mechanism by the mechanism's own rule.* `SKILL_VERDICT` — the
+declaration of what the skill names from the judge's reply — was written, used to satisfy the
+classification walk, and **resolved against nothing**: a declaration that silenced a test while
+checking no data, which is precisely the `TEXT_OMITS` failure the same section warns about,
+reproduced inside item 22. It now resolves against a validated `Verdict`, because the skill
+reads what survived `--verdict` rather than what the judge sent.
+
 ---
 
 ## How items 19 and 21 changed what this project looks for

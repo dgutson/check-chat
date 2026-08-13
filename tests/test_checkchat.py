@@ -63,6 +63,9 @@ def write(tmp_path, records, name="s.jsonl"):
     return p
 
 
+FIXTURES = Path(__file__).resolve().parent / "fixtures"
+
+
 # -------------------------------------------------- the four format traps
 
 def test_split_records_are_one_response(tmp_path):
@@ -2097,3 +2100,481 @@ def test_the_text_renderer_keeps_the_hint_that_says_how_to_fix_it(tmp_path):
 
     assert cli._text({"error": "something with no hint"}) == "error: something with no hint", \
         "and no blank continuation line when there is nothing to add"
+
+
+# ------------------------------------------- the last hop: SKILL.md against the data
+#
+# Item 22, and it is kind 4 of the defect list at its widest distance. `SKILL.md` is the only
+# file here that is *prose about data*, so a rename in `collect()` breaks a reader with no
+# error anywhere: no renderer is wrong, no number is wrong, and the consumer's own rules
+# become unsatisfiable from what it was handed. Asked by hand twice before — of
+# `capabilities` and of the quoting rule — it found a defect both times, and a third time
+# here.
+#
+# Six walks, and the second is the one that found today's defect:
+#   - every identifier-shaped token the skill names in backticks resolves to a declared
+#     place in a real artifact, so a rename fails a test that names `SKILL.md`;
+#   - every datum the skill is told to hand *the user* is printed in `--text`, which is the
+#     artifact step 1 tells it to read while forbidding it the JSON;
+#   - every token is classified, which is what stops the two above checking a list;
+#   - every literal the skill's action tables key on is a string `verdict.render` emits;
+#   - the evidence-tier table covers every tier a check can declare, and every scored item
+#     the judge can return is named somewhere in the prose;
+#   - every `--flag` and both `--emit` filenames are the ones the tool really uses.
+#
+# **The known limit, because it bounds what a green run means.** A walk can check that a
+# named field exists and is printed, never that the rule's *meaning* is satisfied. "Quote the
+# caveat's `warnings` rather than paraphrasing" is checkable; "report only what fired" is not.
+# The mechanism covers the references and leaves the reasoning to the pass by hand.
+
+SKILL_MD = Path(__file__).resolve().parent.parent / "skills" / "check-chat" / "SKILL.md"
+
+_IDENT = re.compile(r"[a-z_][a-z0-9_]*(?:\.[a-z_<>][a-z0-9_<>]*)*")
+
+
+def _skill_prose() -> str:
+    """`SKILL.md` with its fenced blocks removed.
+
+    Stripped before matching, and the inline pattern below forbids a newline, because
+    `` `[^`]+` `` run over the whole file pairs one block's closing fence with the next
+    block's opening fence and yields **zero** tokens — a sweep that reports a clean walk
+    because it matched nothing at all. Same family as the roadmap's "do not glue lines
+    together", and it is not hypothetical: it is what the first run of this walk did.
+    """
+    return re.sub(r"```.*?```", "", SKILL_MD.read_text(), flags=re.S)
+
+
+def _skill_tokens() -> set[str]:
+    return {t for t in re.findall(r"`([^`\n]+)`", _skill_prose()) if _IDENT.fullmatch(t)}
+
+
+# Where the skill's prose says a datum lives, as a path into a real `collect()` output. The
+# path is the whole point and not bookkeeping: resolving a bare name against *any* leaf in
+# the tree passes for the wrong reason — `max` in `SKILL.md` is a reasoning-effort setting and
+# matches `checks.batching.max`, an unrelated field — which is item 20's containment bug
+# arriving by a new route. `[]` means "through every element of this list".
+SKILL_FIELDS = {
+    "catalog": "catalog",
+    "checks": "checks",
+    "fired": "fired",
+    "dimension": "checks.dumps.dimension",
+    "evidence": "checks.dumps.evidence",
+    "error": "checks.exploding.error",
+    "depth_tokens": "session.depth_tokens",
+    # check names, so renaming one in the registry fails here rather than in a report
+    "compaction": "checks.compaction",
+    "continuity": "checks.continuity",
+    "effort": "checks.effort",
+    "failures": "checks.failures",
+    "partial_use": "checks.partial_use",
+    "producers": "checks.producers",
+    "rereads": "checks.rereads",
+    "spill": "checks.spill",
+    "sycophancy": "checks.sycophancy",
+    # the fields named under a check, bare or dotted, exactly as the prose names them
+    "checks.grounding": "checks.grounding",
+    "checks.sycophancy.candidates": "checks.sycophancy.candidates",
+    "ranking_applied": "checks.sycophancy.ranking_applied",
+    "dumps.top": "checks.dumps.top",
+    "batching.solo_share": "checks.batching.solo_share",
+    "cli_probes.recurring": "checks.cli_probes.recurring",
+    "sessions_compared": "checks.cli_probes.sessions_compared",
+    "overkill_turns": "checks.effort.overkill_turns",
+    "circling_turns": "checks.effort.circling_turns",
+    "repeats_after_edit": "checks.rereads.repeats_after_edit",
+    "repeats_disjoint_slices": "checks.rereads.repeats_disjoint_slices",
+    "dropped_bytes": "checks.continuity.dropped_bytes",
+    "warnings": "checks.compaction.warnings",
+    "seams": "checks.compaction.seams",
+    "trigger": "checks.compaction.seams[].trigger",
+    "pre_tokens": "checks.compaction.seams[].pre_tokens",
+    "depth_before": "checks.compaction.seams[].depth_before",
+    "depth_after": "checks.compaction.seams[].depth_after",
+}
+
+# The subset the skill is told to give the **user**, which existence alone does not satisfy:
+# step 1 tells it to read the `--emit` summary and never the raw JSON, so a number that
+# reaches only the JSON is a rule the consumer cannot obey. This is the half that found item
+# 22's defect — all four seam numbers were computed on every compacted session and two of
+# them appeared in no rendered string anywhere.
+#
+# A value maps to the extra spelling its renderer is allowed to use, or `None` for "the
+# number itself". Declared per token rather than guessed by the walk: `continuity` states
+# `dropped_bytes` in MB, which is the datum arriving in the unit a person reads and not a
+# leak — but teaching `_forms` to try every unit conversion would let any integer match
+# almost any digits, which is how a walk starts passing for the wrong reason.
+SKILL_FOR_THE_USER = {
+    "depth_tokens": None,
+    "dropped_bytes": lambda v: f"{v / (1024 * 1024):,.1f} MB",
+    "trigger": None,
+    "pre_tokens": None,
+    "depth_before": None,
+    "depth_after": None,
+    "batching.solo_share": None,
+    "overkill_turns": None,
+    "circling_turns": None,
+    "sessions_compared": None,
+    "repeats_after_edit": None,
+    "repeats_disjoint_slices": None,
+}
+
+# Tokens naming a check's printed label rather than its name. Declared, not excused: the
+# label is what a reader of `--text` sees, so renaming it must break the prose that uses it.
+SKILL_LABELS = {"cli": "cli_probes"}
+
+# Tokens naming an `evidence` tier. The table in `SKILL.md` is the fallback for checks added
+# after it was written, so it is the one list here that must be exhaustive both ways.
+SKILL_TIERS = {"caveat", "proof", "evidenced", "ranked", "descriptive", "weak", "raw"}
+
+# Tokens living in the judge's reply rather than in `collect()` — resolved against a real
+# validated `Verdict`, because "the judge returns `wasted_effort`" is prose about data too,
+# and `verdict.py` is where it can go stale.
+SKILL_VERDICT = {
+    "other_findings": "other_findings",
+    "wasted_effort": "wasted_effort",
+    "candidate_verdicts": "candidate_verdicts",
+    "quote": "other_findings[].quote",
+    "tier": "scores.sycophancy.tier",
+}
+
+# The files `--emit` writes, which the skill is told to hand the judge by name.
+SKILL_EMIT_FILES = {"digest.txt", "candidates.txt"}
+
+# Literal output the skill's two action tables key on: "if you see this line, do that". They
+# are prose about `verdict.render`'s wording, so they go stale exactly like a field name —
+# and worse, because the instruction still reads as sound while matching nothing. Not
+# identifier-shaped, so the tokeniser above cannot reach them; listed rather than derived,
+# and the test says what that costs.
+SKILL_RENDER_LITERALS = {
+    "quotes: NOT CHECKED", "unverified:", "warning:", "dropped:", "RETRY HINT",
+    "[quote not in excerpt]", "candidate_verdicts",
+}
+
+# Identifier-shaped words that are not references to data. Thin on purpose, and read as a
+# contract rather than as test maintenance: an entry here ends this walk's interest in a
+# token permanently, which is the same way `cli.TEXT_OMITS` can be used to silence item 19's.
+SKILL_NOT_DATA = {
+    "max": "a reasoning-effort setting value, not a field — and it collides with "
+           "`checks.batching.max`, which is why nothing here resolves by bare leaf name",
+    "xhigh": "a reasoning-effort setting value, as above",
+    "other_finding": "the singular of `other_findings` in prose about one entry of it",
+    "checkchat": "the executable, exercised by the flag and snippet walks below",
+    "checks.<name>.specifics": "a wildcard over every check, walked as one below",
+}
+
+
+def _resolve(node, path: str) -> list:
+    """Values at a dotted path, `[]` meaning 'through every element of this list'.
+
+    A missing key contributes nothing, so an empty result means *absent* — which is what
+    the walk asserts against. A present key holding `None` is not absent: `depth_after` is
+    deliberately `None` on a seam with no response after it, and conflating the two would
+    make the walk demand a number where the code chose to say "not measured".
+    """
+    cur = [node]
+    for part in path.split("."):
+        key, through = (part[:-2], True) if part.endswith("[]") else (part, False)
+        nxt = []
+        for n in cur:
+            if isinstance(n, dict) and key in n:
+                nxt.extend(n[key] or []) if through else nxt.append(n[key])
+        cur = nxt
+    return cur
+
+
+def _effort_session(tmp_path):
+    """One session holding both halves of the `effort` check, because both are named.
+
+    `overkill_turns` and `circling_turns` are opposite states — trivia answered at `max`, and
+    a turn going round in circles — so a fixture producing one and zeroing the other leaves
+    half the walk asserting that `"0"` appears somewhere, which it always does.
+    """
+    recs = [_human("How do I write a for loop in bash?"),
+            _asst("for i in 1 2 3; do echo $i; done", usage={"input_tokens": 10})]
+    for i in range(4):
+        recs += [_human(f"trivial question {i}"), _asst("short answer", req=f"t{i}")]
+    recs.append(_human("Fix the parser."))
+    for i in range(12):
+        recs += [_asst("", calls=[(f"e{i}", "Edit", {"file_path": "/p.py"})], req=f"e{i}"),
+                 _result(f"e{i}", "ok")]
+
+    sess = transcript.load(write(tmp_path, recs, name="w22-effort.jsonl"))
+    for s in sess.steps:
+        s.effort = "max" if s.turn == 1 else "high"
+    return checks.run(checks.Context(session=sess))
+
+
+def _populated(tmp_path, monkeypatch):
+    """A `collect()`-shaped output in which every field `SKILL.md` names is actually there.
+
+    Necessary rather than tidy, and for the reason item 21's control was rewritten: four of
+    the numbers the skill hands the user live inside `checks.compaction.seams[]`, which is
+    **empty in a clean session**, so a walk run on one passes with the data absent and proves
+    nothing about them. `batching.solo_share` is the same shape — absent, not zero, when no
+    response carried a tool call — and `error` exists only when a check raises.
+
+    So the top-level shape is a real `collect()` run, and each check's entry is taken from a
+    session that populates *that* check. Merged rather than one grand fixture because the
+    inputs are mutually exclusive: a transcript cannot be both under and over the read cap.
+    """
+    base = _collected(tmp_path, monkeypatch)
+
+    @checks.register("exploding", "context", question="?", evidence="raw")
+    def _exploding(ctx):
+        raise RuntimeError("deliberate")
+
+    try:
+        _, oversized = _oversized(tmp_path, name="w22-cont.jsonl")
+        here = _probe_log(tmp_path, "-w22-a", "a.jsonl", ["claude plugin --help"],
+                          "2026-08-08T00:00:01Z")
+        _probe_log(tmp_path, "-w22-b", "b.jsonl", ["claude plugin --help"],
+                   "2026-08-08T00:00:02Z")
+        probe = transcript.load(here)
+        sources = [
+            checks.run(checks.Context(session=oversized)),
+            checks.run(checks.Context(session=transcript.load(FIXTURES / "compacted.jsonl"))),
+            checks.run(checks.Context(session=probe, others=discover.siblings(
+                "/w22/a", exclude=here, contains=detect.PROBE_NEEDLE))),
+            _fires(tmp_path, _PARTIAL_USE_RECORDS, "w22-pu.jsonl"),
+            _reread_session(tmp_path),
+            _effort_session(tmp_path),
+            base["checks"],
+        ]
+    finally:
+        checks.REGISTRY.pop("exploding", None)
+
+    merged = {}
+    for src in sources:
+        for name, r in src.items():
+            # Richest wins: a check that fired has its evidence populated, and among those
+            # that did not, more keys means fewer absent fields. Deterministic either way,
+            # since ties keep the earlier source.
+            rank = (bool(r.get("fired")), len(r))
+            if name not in merged or rank > merged[name][0]:
+                merged[name] = (rank, r)
+    return {**base, "checks": {n: r for n, (_, r) in merged.items()},
+            "fired": sorted(n for n, (_, r) in merged.items() if r.get("fired"))}
+
+
+def test_every_field_skill_md_names_exists_in_a_real_collect_output(tmp_path, monkeypatch):
+    """Item 22's first walk: the document and the data stop drifting silently.
+
+    `SKILL.md` is 488 lines of rules about fields, and nothing paired a rule with the datum
+    that has to satisfy it. Renaming one in `collect()` used to be discovered by a skill
+    quietly reporting nothing."""
+    d = _populated(tmp_path, monkeypatch)
+
+    for token, path in SKILL_FIELDS.items():
+        assert _resolve(d, path), (
+            f"`SKILL.md` names `{token}`, which it says lives at `{path}` — and a real "
+            f"collect() output has nothing there. Either the field was renamed and the "
+            f"skill's prose is now wrong, or this declaration is")
+
+    for name in checks.REGISTRY:
+        assert "specifics" in d["checks"][name], (
+            f"`checks.<name>.specifics` is the rule's wildcard and `{name}` has none, so "
+            f"the skill's 'quote those rows verbatim' has nothing to reach for")
+
+
+def _forms(v) -> list[str]:
+    """How a value could legitimately be spelled in a rendered line."""
+    if isinstance(v, bool):
+        return [str(v)]
+    if isinstance(v, int):
+        return [str(v), f"{v:,}"]
+    if isinstance(v, float):
+        return [str(v), f"{v:.0%}", f"{v:.2f}", f"{round(v, 2)}"]
+    return [str(v)]
+
+
+def test_every_number_the_skill_hands_the_user_is_printed_where_it_reads(tmp_path,
+                                                                        monkeypatch):
+    """Item 22's second walk, and the one that found the defect item 22 shipped with.
+
+    `SKILL.md` says of the seam numbers: "Those numbers are for the user". Step 1 tells the
+    skill to read the `--emit` summary and forbids it the raw JSON, and two of the four —
+    `depth_before` and `depth_after` — appeared in no rendered string anywhere. Computed on
+    every compacted session, printed nowhere a person reads. Existence is not the invariant;
+    arrival is.
+
+    **Searched inside the owning check's own block, not the whole report.** Two reasons, and
+    the second is the one that matters. A check's `line` and `specifics` are strings the
+    *check* composed, so item 19's flip-the-value probe cannot work here — mutating the
+    structured field changes nothing, because the renderer reads the baked string. That
+    leaves a substring search, and a substring search over the whole report is the item 20
+    containment bug waiting to happen: `"0"` appears in almost any report, so a walk over the
+    full text would pass for a check that prints none of its own numbers. Restricting the
+    haystack to `cli._block` — the shipping renderer for one check — is as tight as this can
+    honestly be made. The residual limit is real and stated rather than papered over: a
+    single-digit value can still be matched by an unrelated digit inside its own line.
+    """
+    d = _populated(tmp_path, monkeypatch)
+    text = cli._text(d)
+
+    for token, spelled in sorted(SKILL_FOR_THE_USER.items()):
+        path = SKILL_FIELDS[token]
+        owner = path.split(".")[1] if path.startswith("checks.") else None
+        if owner:
+            haystack = "\n".join(cli._block("*", d["checks"][owner]))
+            assert haystack.splitlines()[0][2:] in text, \
+                f"`{owner}`'s block never reaches `--text`, so nothing under it can"
+        else:
+            haystack = text.split("\n\n")[0]      # the header, which is what renders it
+
+        # Only the values that *are* measured: a `None` is the code declining to state a
+        # number — `depth_after` on a seam with nothing after it — and demanding it be
+        # printed would be demanding a fabricated one.
+        values = [v for v in _resolve(d, path) if v is not None]
+        assert values, (
+            f"`{token}` is unpopulated in this fixture, so the walk proves nothing about "
+            f"it — build a state in which it has a value, as `_populated` says")
+        for v in values:
+            forms = _forms(v) + ([spelled(v)] if spelled else [])
+            assert any(f in haystack for f in forms), (
+                f"`SKILL.md` hands the user `{token}` = {v!r} from `{path}`, and the "
+                f"rendered block for `{owner or 'session'}` — the artifact step 1 tells the "
+                f"skill to read — does not contain it:\n{haystack}")
+
+
+def test_every_token_in_the_skill_is_classified(tmp_path):
+    """The teeth. Without this the two walks above check a list, not the document.
+
+    A new field reference added to `SKILL.md` fails here until someone says where it lives,
+    which is the question item 22 exists to keep being asked."""
+    known = (set(SKILL_FIELDS) | set(SKILL_VERDICT) | set(SKILL_LABELS) | SKILL_TIERS
+             | set(SKILL_NOT_DATA) | SKILL_EMIT_FILES | set(verdict.ITEMS))
+    unclassified = _skill_tokens() - known
+    assert not unclassified, (
+        f"`SKILL.md` names {sorted(unclassified)} and nothing here says what they are. "
+        f"Add each to SKILL_FIELDS with the path it lives at, to SKILL_VERDICT if it is in "
+        f"the judge's reply, or to SKILL_NOT_DATA with the reason it is not data")
+
+    assert len(_skill_tokens()) > 40, (
+        "the tokeniser found almost nothing, which is how it fails: a fence-spanning "
+        "pattern matches zero and reads as a clean walk")
+
+    for token, reason in SKILL_NOT_DATA.items():
+        assert reason.strip(), "an exclusion with no reason is the drift wearing a note"
+
+
+def _judged_reply():
+    """A reply exercising every part of the judge's contract the skill's prose names."""
+    return json.dumps({
+        **json.loads(_reply()),
+        "sycophancy": {"score": 1, "evidence": 'it said "you are absolutely right" and folded'},
+        "candidate_verdicts": [{"candidate": 1, "is_sycophancy": True, "why": "reversed"}],
+        "other_findings": [{"finding": "invented a filename",
+                            "quote": "you are absolutely right"}],
+        "wasted_effort": [{"finding": "re-ran the suite",
+                           "quote": "it said \"you are absolutely right\""}],
+    })
+
+
+def test_every_field_of_the_judges_reply_the_skill_names_is_one_the_validator_keeps(tmp_path):
+    """The same walk on the other artifact, and it exists because `SKILL_VERDICT` would
+    otherwise be a declaration that silences the classification test while checking nothing —
+    which is the `TEXT_OMITS` failure mode reproduced inside item 22's own mechanism.
+
+    Resolved against a **validated** `Verdict`, not against the raw reply: the skill reads
+    what survived `--verdict`, so a field the validator drops is a field its rules cannot
+    reach however faithfully the judge returned it."""
+    excerpt = tmp_path / "digest.txt"
+    excerpt.write_text('it said "you are absolutely right" and folded under one question')
+    v = verdict.check(_judged_reply(), excerpt.read_text())
+
+    for token, path in SKILL_VERDICT.items():
+        assert _resolve(v.as_dict(), path), (
+            f"`SKILL.md` names `{token}` from the judge's reply, at `{path}` — and a real "
+            f"validated Verdict has nothing there")
+
+
+def test_every_line_the_skill_is_told_to_act_on_is_one_the_renderer_emits(tmp_path):
+    """The skill's tables say "if the output says X, do Y". Nothing paired X with the code
+    that prints it, so a reworded line leaves an instruction that reads as sound and matches
+    nothing — the failure is silent on both sides, which is why it belongs in item 22.
+
+    The set is listed rather than derived, and that is the cost: a *new* literal quoted in
+    `SKILL.md` is not noticed here, unlike a new identifier. Deriving it would mean parsing
+    the tables' prose, which is the reasoning half the mechanism is not trying to reach."""
+    v = verdict.check("not json at all")                 # UNUSABLE: problems and a retry hint
+    v.warnings.append("scored 2 but the evidence contains no quotation")
+    v.dropped.append("other_findings[0]: no quote")
+    v.unverified.append("a span nobody could find")
+    v.scores["sycophancy"] = {"score": 1, "evidence": "x", "verified": False,
+                              "tier": verdict.tier(1)}
+    v.candidates = [{"candidate": 1, "is_sycophancy": True, "why": "reversed"}]
+    text = verdict.render(v)
+
+    for literal in sorted(SKILL_RENDER_LITERALS):
+        assert literal in text, (
+            f"`SKILL.md` tells the reader to act on the line `{literal}`, which "
+            f"`verdict.render` does not emit — the instruction is unreachable")
+        assert f"`{literal}`" in _skill_prose(), f"{literal!r} is not quoted in SKILL.md"
+
+    # The hedge is a constant on one side and a quoted string on the other, and the skill
+    # reproduces it verbatim in two places, so it is the likeliest of these to drift.
+    assert f"`[weak: {verdict.HEDGE}]`" in _skill_prose(), \
+        "SKILL.md quotes the weak marker; verdict.HEDGE no longer spells it that way"
+
+
+def test_the_tier_table_covers_every_tier_a_check_can_declare():
+    """The table is the skill's fallback for checks added after it was written — "Do not
+    assume the list below is complete" is only safe if the *tiers* are. A check registered
+    at a tier the table has no row for leaves its reporter with no instruction at all."""
+    declared = {c.evidence for c in checks.REGISTRY.values()}
+    prose = _skill_prose()
+
+    assert declared <= SKILL_TIERS, f"registry declares {declared - SKILL_TIERS}, no row here"
+    for tier in SKILL_TIERS:
+        assert f"| `{tier}` |" in prose, f"`{tier}` has no row in SKILL.md's evidence table"
+    assert SKILL_TIERS <= declared | {"caveat"}, "a row for a tier nothing declares"
+
+
+def test_every_scored_item_the_judge_returns_is_named_in_the_skill():
+    """The reporting rules are per-item — a repair prompt is written from the item that
+    scored. A seventh scored item added to `verdict.ITEMS` reaches the skill with no
+    instruction for how to report it, which is the same silence as an unrendered field."""
+    prose = _skill_prose()
+    for item in verdict.ITEMS:
+        # Marked up as code or bold — the two forms the document uses — and not accepted as a
+        # bare substring, because `confusion` and `sycophancy` are also ordinary English words
+        # and would satisfy the assertion without the item being named at all.
+        assert re.search(rf"(`|\*\*){re.escape(item)}(`|\*\*)", prose), \
+            f"`{item}` is scored and `SKILL.md` names it nowhere, so a reply that scores it " \
+            f"arrives with no instruction for how to report it"
+
+
+def test_every_flag_the_skill_tells_you_to_pass_is_one_the_tool_accepts():
+    """Steps 1 and 2b are command lines, so the flag names are prose about the parser and go
+    stale the same silent way a field name does — the difference being that this one fails
+    loudly at the shell rather than quietly in a report, which is why it ranks below the
+    field walk and is still worth pinning.
+
+    Asked of the shipping parser, not of a list here: a second copy of the flag names is a
+    second thing to forget, which is the defect this whole section is about."""
+    accepted = {opt for action in cli.parser()._actions for opt in action.option_strings}
+    named = set(re.findall(r"(?<![\w-])--[a-z][a-z-]+", SKILL_MD.read_text()))
+
+    assert {"--emit", "--against", "--verdict", "--session", "--siblings"} <= named, \
+        "the sweep found no flags, which is how a regex-driven check reports a clean walk"
+    for flag in sorted(named):
+        assert flag in accepted, (
+            f"`SKILL.md` tells the reader to pass `{flag}`, which `checkchat` does not "
+            f"accept — the parser is the authority, so the prose is what is wrong")
+
+
+def test_the_two_filenames_the_skill_hands_the_judge_are_the_ones_emit_writes(tmp_path,
+                                                                             monkeypatch):
+    """Step 2 names `digest.txt` and `candidates.txt` and tells the judge to read those two
+    files and nothing else. A rename here sends it to read nothing, and a judge given no
+    evidence still returns scored JSON — the failure arrives as a confident verdict over an
+    empty excerpt, which is item 16's shape reached by a different route."""
+    d = _collected(tmp_path, monkeypatch)
+    out = tmp_path / "emitted"
+    monkeypatch.setattr(cli, "collect", lambda *a, **k: d)
+    cli.main(["--cwd", "/repo", "--emit", str(out)])
+
+    assert set(cli.EMIT_FILES) == SKILL_EMIT_FILES, "the skill names files --emit does not"
+    assert {p.name for p in out.iterdir()} == SKILL_EMIT_FILES
+    for name in SKILL_EMIT_FILES:
+        assert f"`{name}`" in _skill_prose(), f"{name} is written and the skill never names it"
