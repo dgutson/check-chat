@@ -1133,6 +1133,12 @@ in it is that session's own value, so `n 1 min 4 max 4` is that session's 4. The
 asks for more than one session and asks what kind of work the corpus is, which is the part
 the numbers cannot carry.
 
+*The residual, moved here from `ROADMAP.md` when item 27 filled the budget.* The walk is
+default-deny over string *values*, against a vocabulary derived from the registry. **Keys get
+only `isidentifier()`** — which every path, command and sentence a conversation can supply
+fails, and which an identifier-shaped filename would pass. What covers the rest is the
+planted-filename control, and a control covers exactly the content it plants.
+
 *The corpus grew while this was written* — 69 sessions on 08-13, **71** on 08-14, because the
 sessions building this tool are themselves transcripts under `~/.claude/projects`. Any figure
 in this file is a reading, not a constant.

@@ -59,28 +59,38 @@ for `**<n>.` to find an entry.
 
 ---
 
-## Now — item 26, with items 23, 24 and 25 shipped underneath it
+## Now — item 27, and it is the one with people waiting on it
 
-Items 23 and 24 were the fifth asking of "does a number reach a consumer who is not on this
-machine", and both halves are answered — so **item 9 now unblocks when one other person
-acts**, and nothing here can hurry that. Item 25 declared the seven format assumptions and
-probed four; its census found a `compactMetadata.postTokens` in every real record while three
-documents said the harness writes none. `HISTORY.md` has both.
+Items 23–25 are shipped; `HISTORY.md` has them. **Item 9 unblocks when someone who is not the
+author sends numbers**, and as of 08-14 that is no longer hypothetical: colleagues who use
+Claude Code heavily have agreed to help and are short of time. Everything below is shaped by
+that — *one* command, *one* file, no reading required before they can start.
 
-**26. Ship the census that found all of that.**
-`formats.IGNORED` declares thirteen record types as carrying nothing this tool counts, and
-every one of those claims came out of a throwaway script in a temp directory — which is the
-mistake item 23 exists to end, made by the item written to end it. Nobody can re-run it, so
-the declaration ages silently: a harness that starts putting a turn in a record called
-`queue-operation` makes that entry wrong, and the entry is what stops anyone looking.
-- *Done when:* the census is a command — record types, and the fields each handled type is
-  read for — over the same corpus `--sweep` walks, so a claim in `formats.py` is checked by
-  running something rather than by remembering a script that no longer exists
-- *It is a `--sweep` sibling, not a check:* it answers "what is in these files", not "what
-  happened in this session", and its output is about the machine rather than a conversation
-- *Then the entry that has no code in it:* `IGNORED` is a silencing surface of the
-  `TEXT_OMITS` kind, so a type appearing there for the first time should have to be looked
-  at, not just counted
+**27. `--calibrate`: one command a busy volunteer runs, one file they send back.**
+`--sweep` already carries the base rates and needs nothing. What it cannot carry is the half
+item 9 actually needs: **a human verdict on each finding**, which no transcript contains.
+`partial_use` fires at 37% on a `proof` tier, and item 21 already found 6 of 48 of its proofs
+bogus — so whether that tier is honest is currently unknown and is reaching users.
+- *Done when:* `checkchat --calibrate` writes **one** file over the volunteer's whole corpus:
+  the sweep aggregate, then every fired `proof`/`evidenced` finding as one line with a blank
+  verdict box, then a footer saying where to send it. They mark boxes and send. No second
+  command, no decisions, no prose to read first
+- *And the other end:* something that reads a stack of returned files and reports the
+  false-positive rate per check. Daniel is handed files, not numbers — the merge is the tool's
+  job, and doing it by hand is item 23's mistake for the third time
+- *Say what is in it, in the first three lines.* Unlike `--sweep`'s aggregate this carries
+  their paths and commands, because a proof cannot be judged without them. Colleagues, not
+  strangers — but the file must state that plainly rather than assume it
+- *The risk that decides the design:* **recall decay.** A proof from three weeks ago is
+  unjudgeable without enough context in the row — date, turn, the command itself. If rows
+  cannot be judged cold, the file comes back empty and the whole item measures nothing
+- *Cap the rows and say the cap*, per `LEDGER_ROWS`: a busy person will not judge 400, and a
+  silent truncation reads as "that was all of them"
+- *Two or three verdicts, never more.* `ok` / `bogus` at minimum; anything richer costs more
+  attention than the volunteers have
+- *Then:* item 26 — ship the record census, whose thirteen `formats.IGNORED` claims came out
+  of a throwaway script in a temp directory, which is item 23's mistake made by the item
+  written to end it
 
 **How the defects have sorted, because it is what predicts the next one.** Four kinds, and
 this list once enumerated only the first. The reasoning is `HISTORY.md`'s "How items 19 and 21
@@ -223,27 +233,17 @@ establishes no base rate and no threshold for the population these were built fo
   is world-readable on a multi-user box, leaving the blinded excerpt where another account can
   read it. Item 24 settled the same question for the *sweep* and not for this: the aggregate
   is declared contentless, the excerpt is the conversation.
-- **The sweep's aggregate is default-deny on its strings and weaker on its keys.** Item 24
-  walks every string *value* against `sweep.sendable_strings()`, derived from the registry,
-  so a string from anywhere else fails. Keys get only `isidentifier()` — which every path,
-  command and sentence a conversation can supply fails, and which an identifier-shaped
-  filename would pass. The rest is covered by a planted-filename control, and a control
-  covers exactly the content it plants.
+- **The sweep's aggregate is default-deny on its string *values* and weaker on its keys** —
+  keys get only `isidentifier()`, which an identifier-shaped filename would pass. A
+  planted-filename control covers the rest, and covers exactly what it plants.
 - **`looks_english` is an unvalidated stopword heuristic.** It only decides whether
   sycophancy candidates get *ranked*, so failing it degrades ordering, never recall.
-- **`spill` depends on harness English wording** (`Output too large … saved to:`), and item
-  25 made that break loudly instead of silently: `formats` reports a spill file read back
-  with no notice anywhere that could have produced it — the robust `tool-results/` half
-  surviving while the fragile half stops matching. It says nothing in a session that spilled
-  nothing, which is the honest limit rather than a gap.
-- **`formats` fires 0/74 on this corpus, and that is the designed answer, not a measurement
-  of nothing.** Each probe asks whether *this* harness still writes the shape the code reads,
-  and this machine's does. Its positive controls are synthetic by construction — which is
-  **not** item 9's problem: those checks are quiet because the population is one expert's and
-  no fixture can fix that, while this one is quiet because the condition is genuinely absent
-  here and the machine where it is not is the whole point. One real transcript does trip a
-  probe (two responses carrying no token count) and it is a fork with no human turn, so
-  `collect()` refuses it and the sweep's denominator never sees it.
+- **`spill` depends on harness English wording** (`Output too large … saved to:`), and item 25
+  made that break loudly rather than silently — `formats` reports a spill file read back with
+  no notice that could have produced it. It says nothing in a session that spilled nothing.
+- **`formats` fires 0/75, which is the designed answer and not a measurement of nothing.** Its
+  controls are synthetic by construction, and `HISTORY.md` item 25 says why that is not item
+  9's problem: this one is quiet because the condition is absent *here*.
 - **One check's needle is held by `__main__`.** `discover.siblings(contains=...)` gets
   `detect.PROBE_NEEDLE` from the caller, so the sibling scan is pre-filtered for the only
   cross-session check there is. A second such check wanting different data would be
