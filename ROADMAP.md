@@ -55,39 +55,32 @@ for `**<n>.` to find an entry.
 | 22 | 08-13 | `SKILL.md`'s rules are walked against the data that must satisfy them; the compaction seam depths were reaching nobody |
 | 23 | 08-13 | `--sweep`: the checks over the whole corpus, which is 69 sessions and not 319 files — and whose first find was its own conflated denominator |
 | 24 | 08-14 | The aggregate is *declared* sendable, not accidentally so — and the ask for one exists, which is the half with no code in it |
+| 25 | 08-14 | The format assumptions are named and four are probed — and the census found a field the code said the harness does not write |
 
 ---
 
-## Now — item 25, with items 23 and 24 shipped underneath it
+## Now — item 26, with items 23, 24 and 25 shipped underneath it
 
-**Items 23 and 24 were the fifth asking of "does a number reach a consumer who is not on
-this machine", and both halves are answered.** `--sweep` computes the base rates item 9 has
-been waiting for; the aggregate is now *declared* sendable rather than accidentally so, and
-the ask exists in `README.md` and `.github/ISSUE_TEMPLATE/`. What remains of them is not
-code: **item 9 unblocks when one other person acts**, and nothing here can hurry that.
+Items 23 and 24 were the fifth asking of "does a number reach a consumer who is not on this
+machine", and both halves are answered — so **item 9 now unblocks when one other person
+acts**, and nothing here can hurry that. Item 25 declared the seven format assumptions and
+probed four; its census found a `compactMetadata.postTokens` in every real record while three
+documents said the harness writes none. `HISTORY.md` has both.
 
-So the next thing this project can do for itself is the one class of defect it has never
-filed. Read item 12's rule before touching any check, and item 13 before trusting a sweep.
-
-**25. Name the format assumptions, and stop each one degrading into a zero.**
-This tool reads another program's output and is **published**: it runs on machines whose
-Claude Code version the author has never seen. Three assumptions are load-bearing and not
-one of them is checked. `spill` matches the harness's English (`Output too large … saved
-to:`). The compaction record format was recovered from a binary — and that route already
-produced two wrong lines of code, because the producer sets a field the written record does
-not have. Blinding relies on `tools: []` granting nothing, which is the opposite of what it
-does. Every one degrades to a **confident zero**, which this file's own lab notes call the
-most expensive failure it has found: `cli_probes` returned 0 for its entire shipped life,
-was twice queued for deletion, and the number was correct every time.
-- *Done when:* every assumption about the harness's format is named in one place, and each
-  one testable at runtime reports its absence as a `caveat` rather than as a zero —
-  demonstrated by handing a fixture the *other* format and watching the caveat appear where
-  the count used to be
-- *Not a version check.* The question is whether the shape the code expects is present in
-  the transcript it was handed, which is answerable without knowing whose harness wrote it
-- *The trap it must not fall into:* "the format is absent" and "the thing never happened"
-  look identical from inside a count, which is the distinction `sessions_compared` already
-  draws for `cli_probes` and the ledger draws for `wasted_effort`
+**26. Ship the census that found all of that.**
+`formats.IGNORED` declares thirteen record types as carrying nothing this tool counts, and
+every one of those claims came out of a throwaway script in a temp directory — which is the
+mistake item 23 exists to end, made by the item written to end it. Nobody can re-run it, so
+the declaration ages silently: a harness that starts putting a turn in a record called
+`queue-operation` makes that entry wrong, and the entry is what stops anyone looking.
+- *Done when:* the census is a command — record types, and the fields each handled type is
+  read for — over the same corpus `--sweep` walks, so a claim in `formats.py` is checked by
+  running something rather than by remembering a script that no longer exists
+- *It is a `--sweep` sibling, not a check:* it answers "what is in these files", not "what
+  happened in this session", and its output is about the machine rather than a conversation
+- *Then the entry that has no code in it:* `IGNORED` is a silencing surface of the
+  `TEXT_OMITS` kind, so a type appearing there for the first time should have to be looked
+  at, not just counted
 
 **How the defects have sorted, because it is what predicts the next one.** Four kinds, and
 this list once enumerated only the first. The reasoning is `HISTORY.md`'s "How items 19 and 21
@@ -100,14 +93,13 @@ changed what this project looks for"; this is the summary that section says it i
 
 Kinds 2–4 are one defect at increasing distance — excerpt, renderer, consumer — so the
 question is **"how far does a number travel before someone acts on it, and what checks each
-hop?"** All four hops have a walk; the fifth is prose. Kind 4 was found three times for three
-askings, and **items 23 and 24 were the fifth** — does a number reach a consumer who is not
-on this machine — which found no leak and instead found the *walk* vacuous: the default-deny
-test passed against a corpus with nothing in it to deny. Four for five. Which is why
-"nothing found" was never a claim about the code —
-it was false in `dda7bbe` (`rereads` miscounting 71% of its findings), false in `ff26380`
-(item 16 sitting in the commit that shipped it), and false again on 08-12 with four leaks in
-the tree.
+hop?"** All four hops have a walk; the fifth is prose. **The pass by hand has produced a find
+on every asking so far**: items 23–24 found no leak and found the *walk* vacuous instead — a
+default-deny test passing over a corpus with nothing in it to deny — and item 25 found a
+number the harness had been writing all along that nothing read, beside a caveat enumeration
+in `SKILL.md` that a new check silently made incomplete. Which is why "nothing found" has
+never been a claim about the code; `HISTORY.md` lists the commits in which it was false as it
+was being written.
 
 ---
 
@@ -149,10 +141,9 @@ They have only **synthetic** positive controls. Daniel's corpus is the negative 
 for the second time — median 1 turn to first edit, essentially zero re-asking — so it
 establishes no base rate and no threshold for the population these were built for.
 - *Unblocks when:* one other person runs `checkchat --sweep` and posts the JSON. Everything
-  on this side of that is shipped — the pass (23), the declared-safe aggregate and the ask
-  in `README.md` and `.github/ISSUE_TEMPLATE/` (24). Not "when real junior transcripts
-  exist": that filing is item 10's, and it sat for a day because the passive voice hid the
-  fact that a base rate is a *number* and numbers can be sent
+  on this side is shipped — the pass (23), the declared-safe aggregate and the ask in
+  `README.md` and `.github/ISSUE_TEMPLATE/` (24). Not "when real junior transcripts exist":
+  that filing was item 10's mistake, and the lab note below says why
 - Until then: do not tune thresholds against Daniel's sessions. That corpus can only show
   the detectors are quiet for an expert, which is the correct behaviour and not evidence
   of anything else.
@@ -240,9 +231,19 @@ establishes no base rate and no threshold for the population these were built fo
   covers exactly the content it plants.
 - **`looks_english` is an unvalidated stopword heuristic.** It only decides whether
   sycophancy candidates get *ranked*, so failing it degrades ordering, never recall.
-- **`spill` depends on harness English wording** (`Output too large … saved to:`). It will
-  break silently if that string changes. The `tool-results/` path pattern is the robust
-  half.
+- **`spill` depends on harness English wording** (`Output too large … saved to:`), and item
+  25 made that break loudly instead of silently: `formats` reports a spill file read back
+  with no notice anywhere that could have produced it — the robust `tool-results/` half
+  surviving while the fragile half stops matching. It says nothing in a session that spilled
+  nothing, which is the honest limit rather than a gap.
+- **`formats` fires 0/74 on this corpus, and that is the designed answer, not a measurement
+  of nothing.** Each probe asks whether *this* harness still writes the shape the code reads,
+  and this machine's does. Its positive controls are synthetic by construction — which is
+  **not** item 9's problem: those checks are quiet because the population is one expert's and
+  no fixture can fix that, while this one is quiet because the condition is genuinely absent
+  here and the machine where it is not is the whole point. One real transcript does trip a
+  probe (two responses carrying no token count) and it is a fork with no human turn, so
+  `collect()` refuses it and the sweep's denominator never sees it.
 - **One check's needle is held by `__main__`.** `discover.siblings(contains=...)` gets
   `detect.PROBE_NEEDLE` from the caller, so the sibling scan is pre-filtered for the only
   cross-session check there is. A second such check wanting different data would be
@@ -327,14 +328,17 @@ Each cost a full re-run to discover, so they are recorded here rather than relea
   showed **24** — every one the row cap under-disclosing, which is harmless, but the clean
   number had already been written into a docstring as equality and was wrong there. Import
   the function. If a sweep cannot call it, that is the finding.
-- **Reading the producer is not reading the product.** Item 10's format was recovered from
-  the harness binary before a compacted transcript existed, and its construction site sets
-  `compactMetadata.postTokens`. The record the harness actually *writes* has no
-  `postTokens` — it is assigned after serialisation. Two lines of code had already been
-  written against it. This is "measure the shipping function, never a model of it" pointed
-  at **someone else's** code, where it is easier to fall for: the source is not a model of
-  the format, it looks like the format itself. Read the producer to find out what to look
-  for; read a real record to find out what is there.
+- **Reading the producer is not reading the product — and this entry's own example was a
+  case of it.** Item 10's format was recovered from the harness binary before a compacted
+  transcript existed, and this note then recorded that its construction site sets
+  `compactMetadata.postTokens` while the record the harness *writes* has none, being assigned
+  after serialisation. **That is false.** Item 25's census found `postTokens` in all four
+  `compact_boundary` records on this machine, including both in `tests/fixtures/compacted.jsonl`
+  — the file this note was written against. The claim was reached by reading the producer and
+  never opening the product, inside the entry that says to open the product, and it sat in a
+  docstring for two days with the field going unread. Read the producer to find out what to
+  look for; read a real record to find out what is there — and when a note says a field is
+  absent, that is a claim about a file somebody can open in one command.
 - **A blocker that names an artifact is a task, not a wait.** Item 10 was filed under
   "blocked on input Daniel does not have" beside item 9, and the two are nothing alike:
   item 9 needs *another person's* transcripts, and item 10 needed a file that any session

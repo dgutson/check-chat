@@ -115,17 +115,31 @@ class Compaction:
     produced and measured; both reduce to "everything from this response onward was
     generated from a summary".
 
-    `pre_tokens` is the harness's own count of the context it discarded. There is no
-    `post_tokens` — the field exists in the harness's source and is *not* in the record it
-    writes, so it is deliberately not read here.
+    `pre_tokens` and `post_tokens` are the harness's own figures for the compaction. **This
+    docstring said for two days that there is no `post_tokens`** — that the field is set in
+    the harness's source and assigned after serialisation, so the written record lacks it —
+    and item 25's format census found that false. All four `compact_boundary` records on this
+    machine carry `postTokens`, including both in `tests/fixtures/compacted.jsonl`, the file
+    the original claim was measured against. The lesson recorded from it ("read a real record
+    to find out what is there") was right; it was drawn from an example nobody had read.
+
+    `post_tokens` is **not** the depth after the seam and must never be paired with a
+    measured one: on the fixture the harness records 100,817 -> 2,455 while the next request
+    measures 26,146, because the summary is re-sent with the system prompt, the tools and the
+    project files behind it. The harness's own pair is internally consistent —
+    `pre - post` accumulates exactly into `cumulative_dropped` — so both are read and reported
+    as the harness's figures, beside the measured depths rather than mixed into them.
     """
 
     step: int
     trigger: str = "unknown"     # "auto" | "manual" — the harness's own word for it
     pre_tokens: int = 0
+    post_tokens: int = 0         # the compacted payload, NOT the depth of the next request
+    cumulative_dropped: int = 0  # the harness's running total across this session's seams
     summary_chars: int = 0       # size of the phantom turn this replaced
     preserved: int = 0           # messages kept verbatim past the seam, per the record
     turn: int = -1               # resolved after parsing: the turn owning `step`
+    from_boundary: bool = False  # a `compact_boundary` record, not an orphan summary
 
 
 @dataclass
@@ -150,6 +164,12 @@ class Session:
     truncated: bool = False
     dropped_bytes: int = 0       # bytes ahead of the read window, when truncated
     model: str | None = None
+    # Every record in the file by type, including the ones no branch below reads. Item 25:
+    # this parser's failure mode is silence — a type it has no branch for is skipped without
+    # a trace, so a renamed record leaves every count correct-looking and zero. The census
+    # costs one dict increment per line and is what `formats.py` walks against its
+    # declaration of what is handled and what is ignored on purpose.
+    record_types: dict[str, int] = field(default_factory=dict)
 
     @property
     def depth(self) -> int:
@@ -203,6 +223,22 @@ def _result_text(block: dict) -> str:
     return ""
 
 
+def _record_kind(rec: dict) -> str:
+    """How a record identifies itself, at the granularity the parser branches on.
+
+    `system` is split by `subtype` because that is where the branch is: `compact_boundary`
+    is read and `turn_duration` is not, and one census key for both would call a handled
+    record and an ignored one the same thing.
+    """
+    if rec.get("type") == "system":
+        return f"system/{rec.get('subtype')}"
+    return str(rec.get("type"))
+
+
+def _census(sess: Session, kind: str) -> None:
+    sess.record_types[kind] = sess.record_types.get(kind, 0) + 1
+
+
 def load(path: str | Path, max_bytes: int = 24 * 1024 * 1024) -> Session:
     """Parse a transcript. Never raises on malformed input."""
     sess = Session(path=str(path))
@@ -230,9 +266,12 @@ def load(path: str | Path, max_bytes: int = 24 * 1024 * 1024) -> Session:
         try:
             rec = json.loads(line)
         except Exception:
+            _census(sess, "<unparsed>")
             continue
         if not isinstance(rec, dict):
+            _census(sess, "<not-an-object>")
             continue
+        _census(sess, _record_kind(rec))
         if not sess.started:
             sess.started = rec.get("timestamp") or ""
             sess.session_id = rec.get("sessionId") or ""
@@ -314,7 +353,10 @@ def load(path: str | Path, max_bytes: int = 24 * 1024 * 1024) -> Session:
                 step=len(sess.steps),
                 trigger=str(meta.get("trigger") or "unknown"),
                 pre_tokens=int(meta.get("preTokens") or 0),
+                post_tokens=int(meta.get("postTokens") or 0),
+                cumulative_dropped=int(meta.get("cumulativeDroppedTokens") or 0),
                 preserved=len(kept) if isinstance(kept, list) else 0,
+                from_boundary=True,
             ))
             continue
 

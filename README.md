@@ -205,7 +205,7 @@ zero. Those cases are permanent regressions in the test suite.
 
 ## Send a base rate (this is the ask)
 
-Every threshold in here was measured against **one** corpus: 71 sessions belonging to one
+Every threshold in here was measured against **one** corpus: ~70 sessions belonging to one
 experienced engineer who demands pushback in his prompts and reaches for a script before
 he reaches for a chat. That corpus is a negative control. It measures sycophancy at zero
 and re-asking at nearly zero, and those are the right answers *for him* — they establish

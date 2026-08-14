@@ -1136,3 +1136,91 @@ the numbers cannot carry.
 *The corpus grew while this was written* — 69 sessions on 08-13, **71** on 08-14, because the
 sessions building this tool are themselves transcripts under `~/.claude/projects`. Any figure
 in this file is a reading, not a constant.
+
+---
+
+**25. The assumptions about somebody else's format, named — and the census found one of them
+already wrong** (2026-08-14). `checkchat/formats.py` declares all seven, `checks.formats`
+reports a contradicted one as a `caveat`, `transcript.load` keeps a record-type census, and
+`Compaction` gained the three fields the record was carrying unread. 9 tests, 139 total.
+
+*Why it was filed.* This tool reads another program's output and is **published**: it runs on
+machines whose Claude Code version the author has never seen. Every one of these assumptions
+fails as a **confident zero**, the shape this project calls its most expensive — `cli_probes`
+returned one for its whole shipped life and was twice queued for deletion while being right
+every time. Nothing looks wrong when a renamed record is skipped: every count stays
+arithmetically correct and describes a fraction of the conversation.
+
+*The census, which is the part that paid.* 258 transcripts, **16 record types**, and the
+parser branches on three of them — `assistant`, `user`, `system/compact_boundary`. The other
+thirteen were skipped without a trace and without a note: `attachment` (2,289),
+`last-prompt` (1,432), `mode` (1,365), `permission-mode` (1,359), `ai-title` (1,287),
+`queue-operation` (484), `file-history-delta` (461), `file-history-snapshot` (408),
+`system/turn_duration` (328), `system/away_summary` (91), `agent-name` (29),
+`system/local_command` (19), `system/informational` (4). Each is now declared with its
+reason, and the ones that could plausibly hold a human turn were opened rather than inferred
+from their names. **`queue-operation` was the one worth checking**: of 62 enqueued inside
+answered sessions, 37 arrive again as a `user` record when they are sent, 22 are machine
+`<task-notification>` tags, 2 are slash commands `clean()` strips anyway, and **1 was a real
+prompt that was never sent** — so ignoring the type is right and the reason is not the one a
+guess would have given.
+
+*The find: `compactMetadata.postTokens` is in the record, and three documents said it is not.*
+`Compaction`'s docstring, `ROADMAP.md`'s "Reading the producer is not reading the product"
+and this file all recorded that the field is set in the harness's source and assigned after
+serialisation, so the written record lacks it. It is in **all four** `compact_boundary`
+records on this machine — **including both in `tests/fixtures/compacted.jsonl`, the file the
+claim was measured against**. The claim was reached by reading the producer and never opening
+the product, inside the note that says to open the product, and it sat there for two days
+while a real number went unread. The lesson was right; the example was an instance of the
+error it warns about.
+
+*And it is not the number it looks like.* `post_tokens` is **2,455** where the measured
+`depth_after` across the same seam is **26,146**, because the next request re-sends the system
+prompt, the tools and the project files behind the summary. Substituting one for the other
+would manufacture a loss out of two true numbers, so they are reported as two clauses of one
+row and a mutation that ORs them together fails a test. The harness's own arithmetic is
+internally consistent and confirms which quantity is which: 100,817 − 2,455 = 98,362, and
++ (26,975 − 2,394) = 122,943, exactly the `cumulativeDroppedTokens` of each seam.
+
+*A probe was written, measured and deleted before it shipped.* Cross-checking the
+declined-call wording against `toolUseResult.interrupted` looked like the obvious structural
+counter-signal for the one assumption that is pure English. `interrupted` is present in 2,316
+results and **true in 0 of 4,841**, while the wording matches 32. A precondition that never
+holds is a detector that cannot fire, so `declined_wording` is declared unprobeable with that
+measurement as the reason — which is what the three unprobed entries are *for*: a reader
+deciding whether to trust a zero can see which assumptions were confirmed against the
+transcript in front of them and which are taken on faith.
+
+*The trap the whole module sits inside.* "The format is absent" and "the thing never
+happened" are one observation from inside a count, so every probe requires local evidence
+that the shape should be there — a `compact_boundary` record with empty metadata, a spill
+file read back with no notice that could have produced it. An orphan `isCompactSummary`
+legitimately carries no trigger and no token count, and a probe that reported *that* as drift
+would fire on a shape the parser handles on purpose. Both states are pinned by one test.
+
+*Its own arrival broke a hardcoded enumeration.* `SKILL.md`'s caveats section said "today
+there are two" and named `continuity` and `compaction`; registering a third caveat left the
+reporter with no instructions for it and nothing noticed — the renderer's hardcoded dimension
+list, one hop over, in prose. A test now fails when a `caveat`-tier check is registered that
+the section does not name. Only that tier, and deliberately: every other tier is reported
+generically from the evidence table, while a caveat changes what the reporter *does*.
+
+*It fires 0/74, which is the designed answer.* Each probe asks whether *this* harness still
+writes the shape the code reads, and this machine's does. Exactly one real transcript trips
+one — two responses carrying no token count — and it is a fork with no human turn, so
+`collect()` refuses it and the sweep never counts it. The controls are otherwise synthetic by
+construction, and that is **not** item 9's problem: those checks are quiet because the
+population is one expert's and no fixture repairs that, while this one is quiet because the
+condition is genuinely absent here and a machine where it is not is the entire point.
+
+*Fourteen mutations, two of which were the mutation's fault.* Building an `Assumption` with
+only a `key` will not construct, so it reported `1 error` at collection — which reads like a
+pass of the harness and a failure of the code and is the reverse. And "substituting the
+after-figure for the measured depth" was written as an extra unread key: it changed the file,
+changed nothing about the output, and reported a false OK. Both are already in `ROADMAP.md`'s
+lab notes, which is how they were recognised on sight rather than believed.
+
+*The roadmap budget is now binding on every item.* This entry left it at 416/420 lines and
+33,948/34,000 bytes, and two blocks moved here to get there. That is the mechanism working,
+and the next item will have to move one too.

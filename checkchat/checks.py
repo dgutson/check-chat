@@ -62,7 +62,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Callable
 
-from . import detect, effort, specification, sycophancy
+from . import detect, effort, formats, specification, sycophancy
 from .transcript import Session
 
 
@@ -340,10 +340,53 @@ def _compaction(ctx):
         side = f"depth before {b:,} tok" if b is not None else f"depth after {a:,} tok"
         return f"{side}, the other side not measured (no response on it)"
 
+    # The harness's own pair, in its own clause. Item 25: `post_tokens` is in the record and
+    # a docstring said for two days that it is not, so it arrived unread — and it is *not*
+    # `depth_after`, which is why it prints beside that rather than filling it in. A seam with
+    # no after-figure says so rather than printing a 0 nobody measured.
+    def harness(r):
+        pre, post = r["pre_tokens"], r["post_tokens"]
+        if not pre and not post:
+            return "no figures in the record"
+        return f"compacted at {pre:,} tok" if not post else f"{pre:,} → {post:,} tok compacted"
+
     return {**c, "specifics": [
-        f"seam {i} at turn {r['turn']} ({r['trigger']}, compacted at {r['pre_tokens']:,} tok) "
+        f"seam {i} at turn {r['turn']} ({r['trigger']}, {harness(r)}) "
         f"— {depth(r)}; {r['preserved_messages']} messages kept"
         for i, r in enumerate(c.get("seams", []), 1)]}
+
+
+@register("formats", "context", evidence="caveat",
+          question="Is this transcript still the shape this tool was built to read?")
+def _formats(ctx):
+    """Item 25. A `caveat` because that tier means "qualifies every other number here",
+    which is exactly what "one of the shapes those numbers are read from is missing" does.
+
+    It states its coverage even when it is clean, and that is the point rather than noise:
+    every other check answers "what happened", and this one answers "how much of the format
+    was confirmed against the transcript in front of you". Three assumptions cannot be probed
+    from a single file and a reader deciding whether to trust a zero is entitled to know
+    which three.
+    """
+    warnings = formats.probe(ctx.session)
+    probed = [a.key for a in formats.ASSUMPTIONS if a.probe]
+    blind = [a.key for a in formats.ASSUMPTIONS if not a.probe]
+    ok = len(probed) - len(warnings)
+    return {
+        "fired": bool(warnings),
+        "assumptions": len(formats.ASSUMPTIONS),
+        "probed": len(probed),
+        "contradicted": len(warnings),
+        "unprobed": len(blind),
+        "record_types": len(ctx.session.record_types),
+        "warnings": warnings,
+        "summary": (f"{len(warnings)} of {len(probed)} format assumptions are contradicted by "
+                    f"this transcript — the numbers below are read from shapes that moved"
+                    if warnings else
+                    f"{ok}/{len(probed)} format assumptions confirmed against this "
+                    f"transcript; {len(blind)} cannot be ({', '.join(blind)})"),
+        "specifics": warnings,
+    }
 
 
 @register("failures", "context", evidence="raw",

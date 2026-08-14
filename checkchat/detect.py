@@ -50,7 +50,14 @@ _PATHY = re.compile(r"[A-Za-z0-9_./~-]*[A-Za-z0-9_-]\.[A-Za-z0-9]+|[A-Za-z0-9_.~
 
 # The harness's own notice that a result was too big to keep.
 _SAVED_TO = re.compile(r"saved to:\s*(\S+)")
-_SPILL_PATH = re.compile(r"tool-results/[\w.-]+\.\w+")
+
+# The two independent signatures of a spilled payload, named here because `formats.py` has
+# to cross-check one against the other and a second copy of either is the thing this project
+# spends its lab notes on. `SPILL_NOTICE` is the fragile half — it is the harness's English,
+# and item 25 exists because that can move without anyone noticing. `SPILL_PATH` is the
+# robust half: a later Read of the spill file names it whatever the notice said.
+SPILL_NOTICE = ("persisted-output", "saved to")
+SPILL_PATH = re.compile(r"tool-results/[\w.-]+\.\w+")
 
 # The substring a transcript must contain before it can possibly hold a probe. Used to
 # pre-filter the corpus in `discover.siblings`, so a bounded scan budget is spent only on
@@ -77,7 +84,7 @@ _WRAPPERS = re.compile(
 )
 
 
-def _path_of(call: Call) -> str:
+def path_of(call: Call) -> str:
     p = call.params
     v = p.get("file_path") or p.get("notebook_path") or p.get("path")
     return v if isinstance(v, str) else ""
@@ -123,7 +130,7 @@ def dumps(sess: Session, top: int = 5) -> dict:
         remaining = max(0, n_steps - c.step)
         rows.append({
             "tool": c.tool,
-            "target": _path_of(c) or _cmd_of(c)[:120] or c.key[:120],
+            "target": path_of(c) or _cmd_of(c)[:120] or c.key[:120],
             "chars": c.result_chars,
             "step": c.step,
             "turn": c.turn,
@@ -159,14 +166,14 @@ def partial_use(sess: Session) -> list[dict]:
     for c in sess.calls:
         if not dump_reason(c):
             continue
-        path = _path_of(c)
+        path = path_of(c)
         if not path:
             continue
         base = os.path.basename(path)
         for later in sess.calls:
             if later.step <= c.step:
                 continue
-            if later.tool in READ_TOOLS and _path_of(later) == path:
+            if later.tool in READ_TOOLS and path_of(later) == path:
                 if later.params.get("limit") or later.params.get("offset"):
                     out.append(_proof(c, path, later, f"later Read of the same file used "
                                       f"limit/offset"))
@@ -222,7 +229,7 @@ def mutation_index(
         if c.declined or (exclude and id(c) in exclude):
             continue
         if c.tool in EDIT_TOOLS:
-            p = _path_of(c)
+            p = path_of(c)
             if p:
                 per_file[os.path.basename(p)].append(c.step)
             continue
@@ -277,7 +284,7 @@ def rereads(sess: Session) -> dict:
     by_path: dict[str, list[Call]] = defaultdict(list)
     for c in sess.calls:
         if c.tool in READ_TOOLS and not c.declined and c.ok is not False:
-            p = _path_of(c)
+            p = path_of(c)
             if p:
                 by_path[p].append(c)
 
@@ -364,7 +371,7 @@ def spill(sess: Session) -> list[dict]:
     spilled: dict[str, Call] = {}
     for c in sess.calls:
         head = c.result_head or ""
-        if "persisted-output" not in head and "saved to" not in head:
+        if not any(n in head for n in SPILL_NOTICE):
             continue
         for m in _SAVED_TO.finditer(head):
             spilled[m.group(1).rstrip(".,)\"'")] = c
@@ -373,11 +380,11 @@ def spill(sess: Session) -> list[dict]:
     for c in sess.calls:
         if c.tool not in READ_TOOLS:
             continue
-        path = _path_of(c)
+        path = path_of(c)
         if not path:
             continue
         origin = spilled.get(path)
-        if origin is None and not _SPILL_PATH.search(path):
+        if origin is None and not SPILL_PATH.search(path):
             continue
         if origin is not None and origin.step >= c.step:
             continue
@@ -698,6 +705,14 @@ def compaction(sess: Session) -> dict:
         rows.append({
             "trigger": c.trigger,
             "pre_tokens": c.pre_tokens,
+            # The harness's own after-figure, kept in its own field and never substituted
+            # for `depth_after`. Item 25 found the docstring claiming this field is absent
+            # from the written record — it is in all four on this machine, including both in
+            # the fixture the claim was measured against — and the two numbers are not the
+            # same quantity: 2,455 against a measured 26,146 across the same seam, because
+            # the next request re-sends the system prompt, the tools and the project files
+            # behind the summary. Reported beside the measured pair, never mixed into it.
+            "post_tokens": c.post_tokens,
             "depth_before": before,
             "depth_after": after,
             "summary_chars": c.summary_chars,

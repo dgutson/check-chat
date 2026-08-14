@@ -26,7 +26,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from checkchat import (  # noqa: E402
-    checks, detect, digest, discover, effort, specification, sweep, sycophancy,
+    checks, detect, digest, discover, effort, formats, specification, sweep, sycophancy,
     transcript, verdict,
 )
 from checkchat import __main__ as cli  # noqa: E402
@@ -2165,6 +2165,7 @@ SKILL_FIELDS = {
     "compaction": "checks.compaction",
     "continuity": "checks.continuity",
     "effort": "checks.effort",
+    "formats": "checks.formats",
     "failures": "checks.failures",
     "partial_use": "checks.partial_use",
     "producers": "checks.producers",
@@ -2188,6 +2189,7 @@ SKILL_FIELDS = {
     "seams": "checks.compaction.seams",
     "trigger": "checks.compaction.seams[].trigger",
     "pre_tokens": "checks.compaction.seams[].pre_tokens",
+    "post_tokens": "checks.compaction.seams[].post_tokens",
     "depth_before": "checks.compaction.seams[].depth_before",
     "depth_after": "checks.compaction.seams[].depth_after",
 }
@@ -2208,6 +2210,7 @@ SKILL_FOR_THE_USER = {
     "dropped_bytes": lambda v: f"{v / (1024 * 1024):,.1f} MB",
     "trigger": None,
     "pre_tokens": None,
+    "post_tokens": None,
     "depth_before": None,
     "depth_after": None,
     "batching.solo_share": None,
@@ -2860,3 +2863,205 @@ def test_content_the_checks_can_see_does_not_survive_into_the_aggregate(tmp_path
     assert s["sessions"] == 1, "the marked session is what was swept"
     assert MARK not in json.dumps(s), \
         "a filename the checks quoted reached the file that gets pasted into an issue"
+
+
+# --------------------------------- item 25: the assumptions about somebody else's format
+#
+# This tool reads another program's output and is published to machines running versions its
+# author has never seen. Every assumption below fails the same way — a **confident zero**,
+# the shape this project calls its most expensive, because `cli_probes` returned one for its
+# entire shipped life and was twice queued for deletion while being right every time.
+#
+# The trap these tests exist to pin: "the format is absent" and "the thing never happened"
+# are the same observation from inside a count. So each probe is tested twice — once in the
+# state where the shape is missing and once in the state where there was nothing to miss.
+
+def _boundary(meta):
+    return {"type": "system", "subtype": "compact_boundary",
+            "timestamp": "2026-08-08T00:00:00Z", "compactMetadata": meta}
+
+
+def _skill_section(heading: str) -> str:
+    """One `###` section of `SKILL.md`, so a token found elsewhere cannot satisfy a claim
+    about this section — item 20's containment lesson, which cost a whole item to learn."""
+    prose = _skill_prose()
+    start = prose.index(heading)
+    rest = prose.index("\n### ", start + len(heading))
+    return prose[start:rest]
+
+
+def test_a_record_type_with_no_branch_is_reported_rather_than_skipped(tmp_path):
+    """The parser's failure mode is silence, so silence is what has to become impossible.
+
+    A renamed record is dropped without a trace: every count stays arithmetically correct
+    and describes a fraction of the conversation. This is the general probe, and the only
+    one that catches drift nobody predicted.
+    """
+    sess = transcript.load(write(tmp_path, [
+        _human("go"),
+        _asst("done"),
+        {"type": "assistant-v2", "timestamp": "2026-08-08T00:00:00Z",
+         "message": {"role": "assistant", "content": [{"type": "text", "text": "hi"}]}},
+        {"type": "ai-title", "title": "a session"},
+    ], name="drift.jsonl"))
+
+    assert sess.record_types["assistant-v2"] == 1, "the census counts what it cannot read"
+    warnings = formats.probe(sess)
+    assert len(warnings) == 1 and "assistant-v2" in warnings[0], warnings
+    assert "ai-title" not in warnings[0], \
+        "a type declared in IGNORED is silent, which is the declaration doing its job"
+
+    r = checks.run(checks.Context(session=sess))["formats"]
+    assert r["fired"] and r["specifics"] == warnings, \
+        "the caveat carries the rows a reporter is required to quote"
+
+
+def test_the_two_record_declarations_are_a_partition_with_reasons():
+    """`IGNORED` is this module's silencing surface — an entry ends its interest in a record
+    type permanently — so it gets the guards `cli.TEXT_OMITS` gets: every reason non-empty,
+    and no type claimed by both lists, which would make "handled" and "ignored" the same
+    word for one record."""
+    assert not (set(formats.HANDLED) & set(formats.IGNORED)), \
+        "a type both handled and declared irrelevant is a contradiction the walk cannot see"
+    for kind, why in {**formats.HANDLED, **formats.IGNORED}.items():
+        assert why.strip(), f"`{kind}` is declared with no reason — the leak wearing a note"
+
+
+def test_every_assumption_carries_a_probe_or_the_reason_there_is_none():
+    """Naming the unprobeable ones *is* the deliverable for them: a reader deciding whether
+    to trust a zero is entitled to know which assumptions were confirmed against the
+    transcript in front of them and which are being taken on faith."""
+    assert formats.ASSUMPTIONS, "an empty declaration would pass every other test here"
+    for a in formats.ASSUMPTIONS:
+        assert a.reads.strip() and a.degrades.strip(), f"{a.key} says nothing about itself"
+        assert bool(a.probe) != bool(a.why_unprobed), (
+            f"{a.key} must either probe or say why it cannot — both is a probe with an "
+            f"excuse attached, neither is an assumption nobody has thought about")
+
+
+def test_a_missing_shape_is_told_from_a_thing_that_never_happened(tmp_path):
+    """The trap, as the two sessions that distinguish it.
+
+    An orphan `isCompactSummary` legitimately carries no trigger and no token count — the
+    parser handles that shape on purpose — so reporting it as drift would fire on correct
+    behaviour. A `compact_boundary` record with empty metadata is the same *absence* with a
+    different meaning: the harness stated the seam and this parser could not read its figures.
+    """
+    orphan = transcript.load(write(tmp_path, [
+        _human("go"), _asst("done"),
+        {"type": "user", "isCompactSummary": True, "timestamp": "2026-08-08T00:00:00Z",
+         "message": {"role": "user", "content": "This session is being continued…"}},
+        _asst("after", req="r2"),
+    ], name="orphan.jsonl"))
+    assert orphan.compactions and not orphan.compactions[0].from_boundary
+    assert formats.probe(orphan) == [], \
+        "a shape the parser handles on purpose is not a shape that went missing"
+
+    stated = transcript.load(write(tmp_path, [
+        _human("go"), _asst("done"),
+        _boundary({"preservedMessages": {"uuids": ["a"]}}),      # no trigger, no preTokens
+        _asst("after", req="r2"),
+    ], name="stated.jsonl"))
+    assert stated.compactions[0].from_boundary
+    assert any("preTokens" in w for w in formats.probe(stated)), formats.probe(stated)
+
+
+def test_a_depth_of_zero_by_absence_is_told_from_one_by_measurement(tmp_path):
+    """`grounding`, the seam sizes and the report header all read `depth`. If the usage block
+    ever moves, every one of them says 0 and none of them says it was never measured."""
+    measured = transcript.load(write(tmp_path, [_human("go"), _asst("done")], name="m.jsonl"))
+    assert formats.probe(measured) == [], "usage is present, so there is nothing to report"
+
+    blind = transcript.load(write(tmp_path, [
+        _human("go"),
+        _asst("done", usage={"output_tokens": 40}),        # a response with no input count
+    ], name="b.jsonl"))
+    assert blind.depth == 0
+    assert any("by absence" in w for w in formats.probe(blind)), formats.probe(blind)
+
+
+def test_the_spill_probe_waits_for_a_spill_to_have_happened(tmp_path):
+    """`spill` has two independent signatures and needs both: the harness's English names the
+    file a payload went to, and `tool-results/` is what reading it back looks like. The
+    robust half surviving alone is the fragile half having moved — and with no spill in the
+    session at all there is nothing to conclude."""
+    quiet = transcript.load(write(tmp_path, [
+        _human("go"),
+        _asst("", calls=[("t1", "Read", {"file_path": "/repo/a.py"})]),
+        _result("t1", "body"),
+    ], name="quiet.jsonl"))
+    assert formats.probe(quiet) == [], "no spill happened, so the wording proves nothing"
+
+    drifted = transcript.load(write(tmp_path, [
+        _human("go"),
+        _asst("", calls=[("t1", "Bash", {"command": "ls"})]),
+        _result("t1", "Output stashed elsewhere: /home/u/.claude/tool-results/x.txt"),
+        _asst("", calls=[("t2", "Read", {"file_path": "/home/u/.claude/tool-results/x.txt"})],
+              req="r2"),
+        _result("t2", "the payload, read back in"),
+    ], name="drift.jsonl"))
+    assert any("tool-results" in w for w in formats.probe(drifted)), formats.probe(drifted)
+
+
+def test_the_compaction_record_carries_the_after_figure_a_docstring_denied():
+    """The find that started item 25, pinned so it cannot revert to a belief.
+
+    `Compaction`'s docstring said for two days that `postTokens` is set in the harness's
+    source and absent from the record it writes. It is in all four `compact_boundary`
+    records on this machine — including both in the fixture the claim was measured against,
+    which is what makes this a lesson about method rather than about a harness release.
+
+    It is also **not** `depth_after`, and pinning that is the more important half: the two
+    differ by an order of magnitude because a request re-sends the system prompt, the tools
+    and the project files behind the summary. Reporting one as the other would produce a
+    fabricated loss out of two real numbers.
+    """
+    raw = [json.loads(ln) for ln in (FIXTURES / "compacted.jsonl").read_text().splitlines()
+           if ln.strip()]
+    stated = [r["compactMetadata"] for r in raw if r.get("subtype") == "compact_boundary"]
+    assert stated and all("postTokens" in m for m in stated), \
+        "the record the harness writes carries the field the docstring said it does not"
+
+    seams = detect.compaction(_compacted())["seams"]
+    assert seams[0]["post_tokens"] == 2_455 and seams[0]["depth_after"] == 26_146, \
+        "the harness's own after-figure and the measured one are different quantities"
+    assert seams[1]["post_tokens"] == 2_394 and seams[1]["depth_after"] is None, \
+        "the seam with nothing measured after it is the one the record can still describe"
+
+    rows = checks.run(checks.Context(session=_compacted()))["compaction"]["specifics"]
+    assert "100,817 → 2,455 tok compacted" in rows[0], \
+        "read and never printed is this project's most repeated defect"
+
+
+def test_a_caveat_check_is_named_where_the_reporter_is_told_about_caveats():
+    """The seam this item's own arrival exposed. That section said "today there are two" and
+    a third was registered with nothing noticing — a hardcoded enumeration of the registry,
+    which is the same defect as the renderer's hardcoded dimension list one hop over.
+
+    Only `caveat` tier, and that is the rule rather than an omission: every other tier is
+    reported generically from the evidence table, while a caveat changes what the reporter
+    *does* and so has to be described one by one.
+    """
+    section = _skill_section("### Caveats")
+    caveats = [n for n, c in checks.REGISTRY.items() if c.evidence == "caveat"]
+    assert len(caveats) > 1, "one caveat cannot show that an enumeration is incomplete"
+    for name in caveats:
+        assert f"`{name}`" in section, (
+            f"`{name}` is a caveat and the section telling the reporter how to handle "
+            f"caveats never names it, so it is reported as an ordinary line")
+
+
+def test_the_format_check_states_its_coverage_when_nothing_is_wrong(tmp_path, monkeypatch):
+    """Unfired, this check answers a question no other check answers: how much of the format
+    was actually confirmed against the transcript you are reading. Three assumptions cannot
+    be probed from one file, and a clean line that implied otherwise would be the confident
+    zero this item is about, wearing the mechanism built to prevent it."""
+    d = _collected(tmp_path, monkeypatch)
+    r = d["checks"]["formats"]
+
+    assert not r["fired"] and r["contradicted"] == 0
+    assert r["probed"] == 4 and r["unprobed"] == 3 and r["assumptions"] == 7
+    for a in formats.ASSUMPTIONS:
+        if not a.probe:
+            assert a.key in r["line"], f"{a.key} cannot be probed and the line does not say so"
+    assert r["line"] in cli._text(d), "a coverage statement nobody reads is not a statement"

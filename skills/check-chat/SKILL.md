@@ -229,12 +229,23 @@ A fired `caveat` check qualifies everything else in the report, so it is the one
 you must not bury. Its `warnings` list is already written for the user; quote it rather
 than paraphrasing.
 
-Today there are two.
+Each one is named below, because a caveat changes what you *do* and not merely how sure you
+are. This list said "today there are two" until a third was registered and nothing noticed;
+a test now fails when a `caveat` check exists that this section does not name.
 
 `continuity` fires when the transcript was larger than the read cap, so it was read **from
 its tail**. Every count in dimension 3 is then a lower bound on a fragment — say that
 once, plainly, and do not present the totals as complete. `dropped_bytes` says how much
 was never read.
+
+`formats` fires when this transcript contradicts a shape the tool reads it through: a record
+type the parser has no branch for, a compaction record carrying no figures, a spill notice
+whose wording has moved. It qualifies the **zeroes** specifically — a check that reported
+nothing may have been looking for something this harness version no longer writes — so name
+which counts its rows put in doubt instead of repeating the rows alone. Unfired, its line
+states how many assumptions were confirmed against this transcript and how many cannot be
+confirmed from one at all; that is coverage, not a finding, and it belongs in the report only
+when the check fired.
 
 `compaction` fires when the harness replaced the conversation's own history with a summary
 while it was running. This one changes your **recommendation**, not just your confidence,
@@ -249,9 +260,12 @@ and it is the only caveat that does:
   filled, and a new conversation starts from even less. Restating the lost constraint is
   the repair, so a fired `compaction` argues *for* a repair prompt and *against*
   `should_restart`, however high that item scored.
-- `seams` gives each seam's `trigger` and `pre_tokens`, and `depth_before`/`depth_after`
-  say how much context was dropped. Those numbers are for the user; the judge never sees
-  them. They print as indented rows under the `compaction` line — one per seam — so quote
+- `seams` gives each seam's `trigger`, and two *different* pairs of sizes. `pre_tokens` and
+  `post_tokens` are the harness's own figures for the payload it compacted; `depth_before`
+  and `depth_after` are what the requests either side of the seam actually measured, and
+  they are larger because a request re-sends the system prompt, the tools and the project
+  files behind the summary. Report them as the two things they are and never subtract one
+  from the other. Those numbers are for the user; the judge never sees them. They print as indented rows under the `compaction` line — one per seam — so quote
   those rather than re-deriving anything, exactly as for every other fired check. This is
   the one caveat that gets more than a line, because "the window filled" is a claim the
   user can only act on with the size of the loss attached.
