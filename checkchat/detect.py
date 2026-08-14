@@ -190,10 +190,44 @@ def partial_use(sess: Session) -> list[dict]:
                 # direction: a missed proof costs recall, a false one costs the tier its word.
                 code = _shell_code(cmd)
                 if base and base in code and _WINDOWED_CMD.search(code):
-                    out.append(_proof(c, path, later, f"later `{cmd.strip()[:70]}` searched it"))
+                    out.append(_proof(c, path, later,
+                                      f"later `{_proof_window(cmd, base)}` searched it"))
                     break
     out.sort(key=lambda r: r["chars"], reverse=True)
     return out
+
+
+# How much of the proving command a proof row shows. The number was always 70; what changed
+# is *where* the 70 characters are taken from.
+PROOF_CMD_WIDTH = 70
+
+
+def _proof_window(cmd: str, base: str, width: int = PROOF_CMD_WIDTH) -> str:
+    """The part of the command that names the file — not the first 70 characters of it.
+
+    A proof row is the tool saying "this later command searched that file", so a row whose
+    visible text never contains the file is a proof of nothing that a reader can check. It
+    was `cmd.strip()[:70]`, and on the development corpus **22 of 37** command-proof rows
+    cut before the filename: one showed a `grep` of `cmake.py` under a finding about
+    `profile.py`, which reads as a false positive and is not one. Found by item 27, because
+    a calibration file is the first artifact that asks somebody to rule on these rows — and
+    a wrong `bogus` corrupts the measurement harder than a missing row does.
+
+    Same family as this project's own note that a truncated echo of a value is not the
+    value, arriving one layer out: there the cut broke a re-check, here it breaks a person's.
+    """
+    text = " ".join(cmd.split())
+    if len(text) <= width:
+        return text
+    at = text.find(base)
+    if at < 0:
+        # `base in _shell_code(cmd)` is what fired, and `_shell_code` rewrites the command,
+        # so the basename can be findable there and not here. The head is then no worse than
+        # what this replaced.
+        return text[:width - 1] + "…"
+    end = min(len(text), max(at + len(base), (at + width // 2)))
+    start = max(0, end - width)
+    return ("…" if start else "") + text[start:end] + ("…" if end < len(text) else "")
 
 
 def _proof(dump: Call, path: str, later: Call, how: str) -> dict:

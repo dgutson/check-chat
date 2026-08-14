@@ -241,6 +241,35 @@ Open an issue with the JSON, or the `--text` output if you prefer. Say roughly w
 of work the corpus is — that is the part the numbers cannot carry, and the part that makes
 them mean something. Nothing else is needed, and please do not send transcripts.
 
+### The other half: was the finding right?
+
+A base rate says how often a check fires. It cannot say whether it was **right**, and no
+transcript contains that — only somebody who was in the conversation does. `partial_use`
+fires at 37% on a tier that claims machine-checkable ground truth, and an audit of 48 of its
+proofs found 6 of them bogus. So there is a second ask, and it is one command and one file:
+
+```bash
+checkchat --calibrate                # writes ~/checkchat-calibration.txt
+```
+
+[CALIBRATE.md](CALIBRATE.md) is the commands alone, in two parts — one to hand to a
+volunteer, one for whoever merges the files that come back.
+
+The file caps itself at 40 findings, spread evenly across checks so the loudest one does not
+eat it, and explains its own marking in its first lines: `b` on a row the tool got **wrong**,
+`?` on one you cannot tell about, blank means right, and an `x` in the `read_all` box at the
+top is what makes the blanks count.
+
+**It is not the anonymous one.** Unlike `--sweep`'s aggregate it carries your file paths,
+your commands, your project directory names and the opening of some of your own prompts,
+because a proof cannot be judged without them. It lists what each check it included can
+disclose, in its own first lines. Read it before sending; do not attach it to a public issue.
+
+On the receiving end, `checkchat --calibrate-merge file1.txt file2.txt …` reports the
+false-positive rate per check across every returned file — with the count it was computed
+from, and with the reason it is an optimistic bound rather than a measurement: a protocol
+that asks for a mark only on wrong rows cannot tell a row confirmed from a row skimmed.
+
 ## Usage outside the skill
 
 ```bash
@@ -249,6 +278,8 @@ checkchat --emit DIR                 # summary + evidence to disk (what the skil
 checkchat --catalog                  # list registered checks
 checkchat --session <id>             # diagnose a session other than the newest
 checkchat --sweep --text             # every transcript on the machine, as one aggregate
+checkchat --calibrate [PATH]         # the volunteer's file: findings with a verdict box each
+checkchat --calibrate-merge F...     # returned files -> false-positive rate per check
 checkchat                            # full JSON
 ```
 

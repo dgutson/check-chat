@@ -15,7 +15,8 @@ The plugin is **installed and working end-to-end** on this machine: `/check-chat
 the deterministic pass takes ~280ms (~86ms of it before item 4 made the cross-session
 comparison actually load other sessions; `--siblings 0` returns it to ~20ms), the judge
 dispatches by `subagent_type`, and the report comes back. `--sweep` runs the same checks over
-the whole corpus in ~6s. 130 tests pass, in the project's **own** virtualenv
+the whole corpus in ~6s and `--calibrate` turns that pass into one file a volunteer marks in
+ten minutes. 152 tests pass, in the project's **own** virtualenv
 (`.venv/bin/pytest` from the repo root). Open work below is ordered by whether it blocks
 someone other than the author.
 
@@ -56,41 +57,24 @@ for `**<n>.` to find an entry.
 | 23 | 08-13 | `--sweep`: the checks over the whole corpus, which is 69 sessions and not 319 files — and whose first find was its own conflated denominator |
 | 24 | 08-14 | The aggregate is *declared* sendable, not accidentally so — and the ask for one exists, which is the half with no code in it |
 | 25 | 08-14 | The format assumptions are named and four are probed — and the census found a field the code said the harness does not write |
+| 27 | 08-14 | `--calibrate`: one file a volunteer marks, one merge reads a stack — and a `proof` row that never named its file |
 
 ---
 
-## Now — item 27, and it is the one with people waiting on it
+## Now — the code side of item 9 is done, and item 9 is now waiting on people
 
-Items 23–25 are shipped; `HISTORY.md` has them. **Item 9 unblocks when someone who is not the
-author sends numbers**, and as of 08-14 that is no longer hypothetical: colleagues who use
-Claude Code heavily have agreed to help and are short of time. Everything below is shaped by
-that — *one* command, *one* file, no reading required before they can start.
+Items 23–25 and 27 are shipped; `HISTORY.md` has them. **Item 9 unblocks when someone who is
+not the author sends verdicts**, and everything the tool can do about that now exists: the
+base rate (`--sweep`), the declared-safe aggregate and the public ask (24), and the one
+command a busy volunteer runs (27). What is left on this side is one item and it is small.
 
-**27. `--calibrate`: one command a busy volunteer runs, one file they send back.**
-`--sweep` already carries the base rates and needs nothing. What it cannot carry is the half
-item 9 actually needs: **a human verdict on each finding**, which no transcript contains.
-`partial_use` fires at 37% on a `proof` tier, and item 21 already found 6 of 48 of its proofs
-bogus — so whether that tier is honest is currently unknown and is reaching users.
-- *Done when:* `checkchat --calibrate` writes **one** file over the volunteer's whole corpus:
-  the sweep aggregate, then every fired `proof`/`evidenced` finding as one line with a blank
-  verdict box, then a footer saying where to send it. They mark boxes and send. No second
-  command, no decisions, no prose to read first
-- *And the other end:* something that reads a stack of returned files and reports the
-  false-positive rate per check. Daniel is handed files, not numbers — the merge is the tool's
-  job, and doing it by hand is item 23's mistake for the third time
-- *Say what is in it, in the first three lines.* Unlike `--sweep`'s aggregate this carries
-  their paths and commands, because a proof cannot be judged without them. Colleagues, not
-  strangers — but the file must state that plainly rather than assume it
-- *The risk that decides the design:* **recall decay.** A proof from three weeks ago is
-  unjudgeable without enough context in the row — date, turn, the command itself. If rows
-  cannot be judged cold, the file comes back empty and the whole item measures nothing
-- *Cap the rows and say the cap*, per `LEDGER_ROWS`: a busy person will not judge 400, and a
-  silent truncation reads as "that was all of them"
-- *Two or three verdicts, never more.* `ok` / `bogus` at minimum; anything richer costs more
-  attention than the volunteers have
-- *Then:* item 26 — ship the record census, whose thirteen `formats.IGNORED` claims came out
-  of a throwaway script in a temp directory, which is item 23's mistake made by the item
-  written to end it
+**26. Ship the record census.** `formats.IGNORED` makes thirteen claims about record types
+this parser skips, and every one of them came out of a throwaway script in a temp directory —
+item 23's mistake, made by the item written to end it. The census belongs in the shipping
+code, where a version bump that renames a type is something a test can notice.
+- *Done when:* the counts in `HISTORY.md` item 25 are produced by a function in `checkchat/`
+  and not by a script that no longer exists, and a claim about a record type is checkable
+  against a corpus by running the tool
 
 **How the defects have sorted, because it is what predicts the next one.** Four kinds, and
 this list once enumerated only the first. The reasoning is `HISTORY.md`'s "How items 19 and 21
@@ -150,10 +134,17 @@ never built.
 They have only **synthetic** positive controls. Daniel's corpus is the negative control
 for the second time — median 1 turn to first edit, essentially zero re-asking — so it
 establishes no base rate and no threshold for the population these were built for.
-- *Unblocks when:* one other person runs `checkchat --sweep` and posts the JSON. Everything
-  on this side is shipped — the pass (23), the declared-safe aggregate and the ask in
-  `README.md` and `.github/ISSUE_TEMPLATE/` (24). Not "when real junior transcripts exist":
-  that filing was item 10's mistake, and the lab note below says why
+- *Unblocks when:* one other person runs `checkchat --calibrate` and sends the file back —
+  `--sweep`'s numbers are half of it and the marked boxes are the half no transcript holds.
+  Everything on this side is shipped: the pass (23), the declared-safe aggregate and the
+  public ask (24), the volunteer's file and the merge (27). Not "when real junior transcripts
+  exist": that filing was item 10's mistake, and the lab note below says why
+- *The first returned file is also a test of the file itself.* If the boxes come back mostly
+  `?`, the rows were not judgeable cold and the fix is the row, not the volunteer
+- *One known false positive to fix while tuning, found by item 27:* 3 of 7 `specification`
+  rows here are `<task-notification>` records — machine-injected turns counted as requests
+  the user typed. True about the transcript, false about the person, and each one spends a
+  slot of a volunteer's forty
 - Until then: do not tune thresholds against Daniel's sessions. That corpus can only show
   the detectors are quiet for an expert, which is the correct behaviour and not evidence
   of anything else.
@@ -233,6 +224,14 @@ establishes no base rate and no threshold for the population these were built fo
   is world-readable on a multi-user box, leaving the blinded excerpt where another account can
   read it. Item 24 settled the same question for the *sweep* and not for this: the aggregate
   is declared contentless, the excerpt is the conversation.
+- **`--calibrate`'s false-positive rate is biased low, by design.** A volunteer marks only
+  the rows the tool got *wrong*, so a row skimmed and a row confirmed leave the same blank.
+  That is the trade that buys a file which comes back at all, and `read_all` is the only
+  thing keeping it honest — blanks count as verdicts solely in a file whose reader said they
+  read every row, and an unmarked file scores as unjudged rather than crediting the checks.
+  Read a low rate as an optimistic bound on precision. The **other** direction is the one to
+  watch: a row a volunteer cannot check reads as bogus, which is why `partial_use`'s proof
+  window was fixed before anyone was asked to rule on one.
 - **The sweep's aggregate is default-deny on its string *values* and weaker on its keys** —
   keys get only `isidentifier()`, which an identifier-shaped filename would pass. A
   planted-filename control covers the rest, and covers exactly what it plants.
@@ -241,9 +240,6 @@ establishes no base rate and no threshold for the population these were built fo
 - **`spill` depends on harness English wording** (`Output too large … saved to:`), and item 25
   made that break loudly rather than silently — `formats` reports a spill file read back with
   no notice that could have produced it. It says nothing in a session that spilled nothing.
-- **`formats` fires 0/75, which is the designed answer and not a measurement of nothing.** Its
-  controls are synthetic by construction, and `HISTORY.md` item 25 says why that is not item
-  9's problem: this one is quiet because the condition is absent *here*.
 - **One check's needle is held by `__main__`.** `discover.siblings(contains=...)` gets
   `detect.PROBE_NEEDLE` from the caller, so the sibling scan is pre-filtered for the only
   cross-session check there is. A second such check wanting different data would be

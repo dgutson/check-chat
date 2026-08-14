@@ -21,7 +21,8 @@ import sys
 import time
 from pathlib import Path
 
-from . import checks, detect, digest, discover, inventory, sweep, transcript, verdict
+from . import (calibrate, checks, detect, digest, discover, inventory, sweep, transcript,
+               verdict)
 
 
 def collect(cwd: str, session_id: str | None = None, siblings: int = 12) -> dict:
@@ -230,8 +231,18 @@ def parser() -> argparse.ArgumentParser:
                     help="aggregate the checks over every transcript on this machine and "
                          "exit — a maintainer's tool for base rates, not a session report")
     ap.add_argument("--sweep-limit", type=int, default=0, metavar="N",
-                    help="with --sweep, consider only the N newest transcripts (0 = all). "
-                         "The cap is reported in the output")
+                    help="with --sweep and --calibrate, consider only the N newest "
+                         "transcripts (0 = all). The cap is reported in the output")
+    ap.add_argument("--calibrate", metavar="PATH", nargs="?", const="", default=None,
+                    help="write the one file a volunteer marks and sends back: the sweep "
+                         f"aggregate plus up to {calibrate.CALIBRATE_ROWS} fired findings "
+                         f"with a verdict box each. Defaults to {CALIBRATE_DEFAULT}")
+    ap.add_argument("--calibrate-rows", type=int, default=calibrate.CALIBRATE_ROWS,
+                    metavar="N", help="with --calibrate, how many findings to ask about "
+                                      "(the cap is stated in the file, with what it cut)")
+    ap.add_argument("--calibrate-merge", metavar="FILE", nargs="+", default=None,
+                    help="read returned calibration files and report the false-positive "
+                         "rate per check, then exit")
     return ap
 
 
@@ -240,6 +251,12 @@ def parser() -> argparse.ArgumentParser:
 # read nothing — and a test can only pair the rule with the artifact if the artifact says
 # which names it wrote.
 EMIT_FILES = ("digest.txt", "candidates.txt")
+
+# Where `--calibrate` writes when nobody says. The home directory rather than the cwd
+# because a volunteer runs this from wherever they happen to be standing, and that is
+# usually a repository — a file dropped there gets committed or lost. Named, not built
+# inline, because the help text quotes it and a second spelling of a path is a second path.
+CALIBRATE_DEFAULT = "~/checkchat-calibration.txt"
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -260,6 +277,32 @@ def main(argv: list[str] | None = None) -> int:
         # case for a maintainer running this from a checkout.
         s = sweep.run(limit=a.sweep_limit, siblings=a.siblings)
         print(sweep.render(s) if a.text else json.dumps(s, indent=1, default=str))
+        return 0
+
+    if a.calibrate_merge is not None:
+        # Daniel is handed files, not numbers, and merging them by hand is item 23's mistake
+        # for the third time. An unreadable file is a warning next to the rest rather than
+        # an exit: a stack where one file is broken must still produce the rate for the rest.
+        parsed, unreadable = [], []
+        for name in a.calibrate_merge:
+            try:
+                parsed.append(calibrate.parse(Path(name).read_text(errors="replace"), name))
+            except OSError as exc:
+                unreadable.append(f"{name}: {exc}")
+        m = calibrate.merge(parsed)
+        m["warnings"] = [*(f"could not read {u}" for u in unreadable), *m["warnings"]]
+        print(json.dumps(m, indent=1, default=str) if a.json else calibrate.render_merge(m))
+        return 0
+
+    if a.calibrate is not None:
+        out = Path(a.calibrate or CALIBRATE_DEFAULT).expanduser()
+        d = calibrate.build(limit=a.sweep_limit, siblings=a.siblings, cap=a.calibrate_rows)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(calibrate.render(d))
+        # The path and the count. Where to send it is the business of whoever asked for it,
+        # not of this tool — a default contact here would be a guess about a person and a
+        # channel, and the file says everything else about itself.
+        print(f"wrote {out} — {len(d['rows'])} findings")
         return 0
 
     if a.verdict is not None:

@@ -26,7 +26,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from checkchat import (  # noqa: E402
-    checks, detect, digest, discover, effort, formats, specification, sweep, sycophancy,
+    calibrate, checks, detect, digest, discover, effort, formats, specification, sweep,
+    sycophancy,
     transcript, verdict,
 )
 from checkchat import __main__ as cli  # noqa: E402
@@ -3065,3 +3066,374 @@ def test_the_format_check_states_its_coverage_when_nothing_is_wrong(tmp_path, mo
         if not a.probe:
             assert a.key in r["line"], f"{a.key} cannot be probed and the line does not say so"
     assert r["line"] in cli._text(d), "a coverage statement nobody reads is not a statement"
+
+
+# ------------------------------ item 27: the one file a volunteer marks, and the merge
+#
+# This is the first artifact in the project that asks *another person* to do something, and
+# the thing it spends is their attention. So the tests below are about two failures that
+# both end with a file that measures nothing: rows that cannot be judged from what they say,
+# and verdicts that go missing between the file and the rate. The third failure — asking
+# about something the tool never claimed — is the `unjudgeable` walk.
+
+def _calibration_corpus(tmp_path, monkeypatch):
+    """Two sessions firing two *different* judgeable checks, with more findings than any cap
+    under test.
+
+    Two is the minimum that can tell round-robin selection from "the first N": one check
+    cannot starve another when there is only one. The dump session carries four proofs and
+    `SPECIFIC_ROWS` caps it at three, which is also the state in which the cut note exists —
+    the row `evidence_rows` appends about its own truncation, and the one thing that must
+    never arrive with a verdict box in front of it.
+    """
+    d = tmp_path / "projects" / "-repo"
+    d.mkdir(parents=True, exist_ok=True)
+
+    # The first path is long enough that its row overflows `CALIBRATE_WIDTH`, and its dump is
+    # the biggest so it survives the sort into the three rows kept. Without it the file has
+    # no truncated row, and every assertion about how truncation is disclosed passes over a
+    # state that never occurs — item 21's rule, which this project has now been caught by
+    # twice.
+    records = [_human("read the files"),
+               _asst("", calls=[("L", "Read", {"file_path": "/repo/" + "nested/" * 30
+                                                            + "long_name.py"})], req="rL"),
+               _result("L", "x" * 9000),
+               _asst("", calls=[("L2", "Read", {"file_path": "/repo/" + "nested/" * 30
+                                                             + "long_name.py",
+                                                "limit": 5, "offset": 2})], req="rL2"),
+               _result("L2", "x" * 80)]
+    for i in range(4):
+        src = f"/repo/module_{i}.py"
+        records += [
+            _asst("", calls=[(f"a{i}", "Read", {"file_path": src})], req=f"ra{i}"),
+            _result(f"a{i}", "x" * 6000),
+            _asst("", calls=[(f"b{i}", "Read", {"file_path": src, "limit": 5, "offset": 2})],
+                  req=f"rb{i}"),
+            _result(f"b{i}", "x" * 80),
+        ]
+    write(d, records, name="dumps.jsonl")
+
+    write(d, [
+        _human("make it better"),
+        _asst("Here is a long discussion of what better could mean. " * 20, req="v1"),
+        _human("keep going with that"),
+        _asst("Here is a second long discussion, still with no work done. " * 20, req="v2"),
+    ], name="vague.jsonl")
+
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+    return d
+
+
+def test_the_sweep_aggregate_is_untouched_by_the_observer_calibrate_reads_it_through(
+        tmp_path, monkeypatch):
+    """The seam item 27 cut into `sweep.run`, guarded in the direction that would hurt.
+
+    The aggregate is the one output *declared* safe to send, and `--calibrate` reaches the
+    findings by riding the same walk. A callback that could add to it — or a widened
+    evidence row that could reach a numeric field — would put somebody's filename in the
+    file that gets pasted into public issues. So the claim is equality of the whole
+    structure, not "the observer returns None".
+    """
+    _calibration_corpus(tmp_path, monkeypatch)
+    plain = sweep.run()
+    seen = []
+    watched = sweep.run(observe=lambda s, r: seen.append(s.path),
+                        evidence_width=calibrate.CALIBRATE_WIDTH)
+
+    assert seen, "the observer saw no session, so this proves nothing about it"
+    for d in (plain, watched):
+        d.pop("elapsed_ms")
+    assert plain == watched, "riding the sweep changed what the sweep sends"
+
+
+def test_calibration_never_asks_about_a_check_whose_rows_are_not_findings(tmp_path,
+                                                                         monkeypatch):
+    """`sycophancy` is `proof` tier and fires in half of all sessions, and its rows point at
+    candidates for the judge rather than stating anything. A tier-only walk would put forty
+    boxes in front of a volunteer asking them to rule on exchanges nobody has ruled on — a
+    pre-pass designed to over-select, harvested as findings it was never allowed to make.
+
+    The premise is asserted first: if the registry ever stops declaring one, this test keeps
+    passing while guarding nothing.
+    """
+    unjudgeable = {n for n, c in checks.REGISTRY.items() if c.unjudgeable}
+    assert unjudgeable, "no check declares `unjudgeable`, so the walk below proves nothing"
+
+    _marked_corpus(tmp_path, monkeypatch)
+    d = calibrate.build()
+
+    assert d["aggregate"]["checks"]["sycophancy"]["fired"], (
+        "the fixture does not fire the check this is about, so its absence below is a fact "
+        "about the fixture")
+    assert not {r["check"] for r in d["rows"]} & unjudgeable
+    for name in unjudgeable:
+        assert d["skipped"].get(name), f"{name} is skipped and the file never says so"
+        assert d["skipped"][name] in calibrate.render(d), (
+            f"the reason {name} is not asked about reaches nobody, so the file looks like "
+            f"it covers a check it does not")
+
+
+def test_every_judgeable_check_declares_what_a_row_of_it_puts_in_somebody_elses_file():
+    """Consent is composed from the registry, never from a sentence in the renderer.
+
+    The file's "what is in this file" paragraph is built from the `discloses` of the checks
+    actually in it. A check added tomorrow with no declaration would ship its evidence to
+    another person's screen under a paragraph that does not mention it — the same silent
+    staleness `label` was declared to end, with a privacy consequence instead of a cosmetic
+    one.
+    """
+    for name, chk in checks.REGISTRY.items():
+        if chk.evidence in calibrate.JUDGEABLE_TIERS and not chk.unjudgeable:
+            assert chk.discloses, (
+                f"`{name}` is {chk.evidence} tier, so `--calibrate` will send its evidence "
+                f"rows to another person — and it declares nothing about what those rows "
+                f"contain, so the file cannot say what it is asking them to disclose")
+
+
+def test_the_cap_is_spread_across_checks_rather_than_eaten_by_the_loudest(tmp_path,
+                                                                         monkeypatch):
+    """`partial_use` fires at 37% on the real corpus and `spill` at 1%. First-N selection is
+    a calibration of one check wearing the costume of a calibration of six, and it fails
+    silently: the file looks full.
+
+    The cap is set to exactly the number of checks that fired, which is the state where the
+    two walks differ most visibly: `partial_use` alone offers that many rows, so first-N
+    returns nothing else at all.
+    """
+    _calibration_corpus(tmp_path, monkeypatch)
+    counts = calibrate.build()["counts"]
+    assert len(counts) > 2 and counts["partial_use"]["found"] >= len(counts), (
+        "the loudest check cannot fill the cap on its own here, so a first-N walk would "
+        "pass this by accident")
+
+    d = calibrate.build(cap=len(counts))
+    assert {r["check"] for r in d["rows"]} == set(counts), (
+        "the cap was spent on the loudest check, so the rare ones come back unmeasured "
+        "while the file looks full")
+
+
+def test_the_cap_says_what_it_cut_and_a_starved_check_says_it_was_starved(tmp_path,
+                                                                         monkeypatch):
+    """A silent truncation reads as "that was all of them" — and a check missing from the
+    file is indistinguishable from a check that never fired, which is the confident zero
+    this project keeps finding in its own output."""
+    _calibration_corpus(tmp_path, monkeypatch)
+    full = calibrate.build()
+    text = calibrate.render(calibrate.build(cap=1))
+
+    assert full["counts"]["partial_use"]["found"] == 3, (
+        "SPECIFIC_ROWS caps the dump session at three rows; the fixture offers four")
+    assert f"showing 1 of {full['counts']['partial_use']['found']} found" in text
+    assert "cap 1 rows" in text
+    assert re.search(r"specification — \d+ found, 0 shown", text), (
+        "a check the cap starved is absent from the file, which reads as a check that "
+        "never fired")
+
+
+def test_the_row_that_says_evidence_was_truncated_never_arrives_with_a_verdict_box(
+        tmp_path, monkeypatch):
+    """`evidence_rows` appends a sentence about its own cut, and that sentence is not a
+    finding. A box in front of it collects a verdict on the renderer.
+
+    Sliced by the constant that produced it rather than matched by its wording, so this is
+    the control for a cut note somebody rephrases.
+    """
+    _calibration_corpus(tmp_path, monkeypatch)
+    d = calibrate.build()
+    text = calibrate.render(d)
+
+    sess = transcript.load(tmp_path / "projects" / "-repo" / "dumps.jsonl")
+    rows = checks.run(checks.Context(session=sess, others=[]))["partial_use"]["specifics"]
+    cut = rows[-1]
+    assert cut.startswith("(+") and "more" in cut, (
+        "the fixture does not overflow the row cap, so no cut note exists to exclude")
+    assert cut not in [r["text"] for r in d["rows"]]
+    assert f"] partial_use  {cut}" not in text
+
+
+def test_a_marked_file_comes_back_as_verdicts_and_an_unmarked_one_lends_no_blanks(
+        tmp_path, monkeypatch):
+    """The whole round trip, and the gate that is the reason blanks are allowed to mean
+    anything at all.
+
+    Marking only the wrong rows is what makes ten minutes enough, and it is exactly what
+    makes an unread file look like a clean sweep. `read_all` is the difference between a
+    precision figure and a count of rows nobody opened, so both sides are asserted here:
+    the same file, marked and unmarked, must not produce the same number.
+    """
+    _calibration_corpus(tmp_path, monkeypatch)
+    blank = calibrate.render(calibrate.build())
+    n = blank.count("\n [ ] ")
+    assert n >= 4, "too few rows to tell a verdict from a default"
+
+    marked = blank.replace(f"  [ ] {calibrate.READ_ALL}", f"  [x] {calibrate.READ_ALL}")
+    marked = marked.replace("\n [ ] partial_use", "\n [b] partial_use", 1)
+    marked = marked.replace("\n [ ] specification", "\n [?] specification", 1)
+
+    m = calibrate.merge([calibrate.parse(marked, "marked.txt")])
+    assert m["checks"]["partial_use"]["bogus"] == 1
+    assert m["checks"]["specification"]["unsure"] == 1
+    assert m["checks"]["partial_use"]["fp_rate"] is not None
+    assert sum(c["ok"] for c in m["checks"].values()) == n - 2, \
+        "a blank in a read file is a verdict, and these two were not blanks"
+
+    unread = calibrate.merge([calibrate.parse(blank, "unread.txt")])
+    assert all(c["ok"] == 0 for c in unread["checks"].values())
+    assert sum(c["unjudged"] for c in unread["checks"].values()) == n
+    assert all(c["fp_rate"] is None for c in unread["checks"].values()), (
+        "an unopened file produced a precision figure, which is the one number this must "
+        "never invent")
+    assert "read_all" in calibrate.render_merge(unread) or "NO" in \
+        calibrate.render_merge(unread)
+
+
+def test_a_mark_the_legend_does_not_define_is_counted_apart_rather_than_guessed(
+        tmp_path, monkeypatch):
+    """`x` is the natural way to tick a `[ ]` and says nothing about which verdict was
+    meant. Reading it as either one invents a data point; dropping it silently loses one.
+    It is counted as `unclear`, kept out of the rate, and said out loud."""
+    _calibration_corpus(tmp_path, monkeypatch)
+    text = calibrate.render(calibrate.build()).replace("\n [ ] partial_use",
+                                                       "\n [x] partial_use", 1)
+    f = calibrate.parse(text, "ticked.txt")
+    m = calibrate.merge([f])
+
+    assert m["checks"]["partial_use"]["unclear"] == 1
+    assert m["checks"]["partial_use"]["ok"] == 0 and m["checks"]["partial_use"]["bogus"] == 0
+    assert any("unclear" in w for w in m["warnings"])
+    assert "unclear" in calibrate.render_merge(m)
+
+
+def test_a_file_that_will_not_parse_does_not_cost_the_others_their_verdicts(tmp_path,
+                                                                           monkeypatch):
+    """Daniel is handed a stack of files by people who edited them in whatever they had. A
+    merge that dies on the third one is the hand-merging this exists to end — so a mangled
+    data block is a warning beside the rows that did survive."""
+    _calibration_corpus(tmp_path, monkeypatch)
+    good = calibrate.render(calibrate.build()).replace(
+        f"  [ ] {calibrate.READ_ALL}", f"  [x] {calibrate.READ_ALL}")
+    broken = good.split(calibrate.DATA_MARK)[0] + calibrate.DATA_MARK + "\n{not json at all"
+
+    m = calibrate.merge([calibrate.parse(broken, "mangled.txt"),
+                         calibrate.parse(good, "fine.txt")])
+
+    assert m["corpora"] == 2
+    # The *mangled* file's own rows, not the total. Asserting the total left this green with
+    # `parse` discarding every row of a file whose data block was bad, because the intact
+    # file supplied the number on its own — the shape of clean pass this project keeps
+    # writing, caught here by mutating the discard in.
+    assert m["files"][0]["rows"] == m["files"][1]["rows"] > 0, \
+        "the broken block took the verdicts above it down with it"
+    assert sum(c["ok"] for c in m["checks"].values()) > 0
+    assert any("did not parse" in w for w in m["warnings"])
+    assert m["files"][0]["sessions"] is None and m["files"][1]["sessions"] == 2, (
+        "the corpus size came from somewhere other than the data block that did not parse")
+
+
+def test_everything_the_calibration_file_computes_reaches_the_person_marking_it(
+        tmp_path, monkeypatch):
+    """Item 19's rule against the producer whose only renderer *is* the artifact.
+
+    There is no omission list. Every number here changes what the reader does — the cap
+    tells them the file is a sample, the counts tell them what it cut, the disclosure tells
+    them what they are sending — so a value computed and unprinted is a decision made for
+    somebody without telling them.
+    """
+    _calibration_corpus(tmp_path, monkeypatch)
+    d = calibrate.build()
+    text = calibrate.render(d)
+
+    # Pinned to the words each value is printed beside, never loose in the file. A file this
+    # full of small integers supplies a matching digit for free, and `str(value) in text` is
+    # item 20's containment bug arriving in the test written to prevent item 19's.
+    assert d["truncated_rows"], "no row was cut, so the disclosure of the cut is untested"
+    for key, pattern in (("generated", r"read on {v}"),
+                         ("cap", r"cap {v} rows"),
+                         ("sessions", r"FROM {v} session transcripts"),
+                         ("minutes", r"{v} min\."),
+                         ("truncated_rows", r"{v} rows end in")):
+        assert re.search(pattern.format(v=re.escape(str(d[key]))), text), \
+            f"{key} = {d[key]!r} is not printed beside the words that say what it is"
+    for phrase in d["discloses"]:
+        assert phrase in text, "a row's disclosure is computed and the file does not say it"
+    for name, c in d["counts"].items():
+        assert f"{name} — " in text, f"{name} has rows and no heading"
+        assert f"showing {c['shown']} of {c['found']} found" in text
+    # One line carrying all five, not five fields found somewhere in the file: the date and
+    # the session id are recall aids and are worth nothing on a different row from the
+    # finding they are meant to place.
+    for row in d["rows"]:
+        assert any(x.startswith(" [ ] ")
+                   and all(row[f] in x for f in ("check", "date", "project", "session"))
+                   and x.endswith(row["text"])
+                   for x in text.splitlines()), \
+            f"no single line carries this row and what places it: {row}"
+    assert sweep.render(d["aggregate"]).splitlines()[0] in text, \
+        "the base-rate half of the file is computed and not written into it"
+
+
+def test_the_file_says_what_each_row_carries_before_the_rows(tmp_path, monkeypatch):
+    """Unlike `--sweep`'s aggregate this one carries paths, commands and the opening of the
+    volunteer's own prompts. The file has to state that itself: the person running it was
+    handed a command, not this repository's README.
+
+    Where it goes is *not* here and is not the tool's business — a default contact would be
+    a guess about a person and a channel. Whoever hands out the command says that part.
+    """
+    _calibration_corpus(tmp_path, monkeypatch)
+    d = calibrate.build()
+    head = calibrate.render(d).split("\n\n")[1]
+
+    assert "NOT anonymous" in head
+    for phrase in d["discloses"]:
+        assert phrase in head, "a row's disclosure is not in the paragraph that discloses"
+    assert not any(r["text"] in head for r in d["rows"]), \
+        "the disclosure paragraph must describe the rows, not be one of them"
+
+
+def test_a_proof_row_shows_the_part_of_the_command_that_names_the_file(tmp_path):
+    """`cmd.strip()[:70]` cut before the filename in 22 of 37 command-proof rows on the
+    development corpus: one showed a `grep` of `cmake.py` under a finding about
+    `profile.py`, which reads as a false positive and is not one.
+
+    It only mattered once somebody outside the project was asked to rule on these rows —
+    a wrong `bogus` corrupts the calibration harder than a missing row does — but the same
+    string is what `--text` prints, so the report was showing a proof that proved nothing
+    for as long as the row has existed.
+    """
+    src = "/repo/deep/profile.py"
+    lead = "grep -n ExternalProject deep/cmake.py | head -20 ; echo scope evidence ; "
+    cmd = lead + "grep -n load " + src
+    assert len(lead) > detect.PROOF_CMD_WIDTH, "the fixture does not cut before the filename"
+
+    sess = transcript.load(write(tmp_path, [
+        _human("go"),
+        _asst("", calls=[("t1", "Read", {"file_path": src})], req="r1"),
+        _result("t1", "x" * 6000),
+        _asst("", calls=[("t2", "Bash", {"command": cmd})], req="r2"),
+        _result("t2", "hit"),
+    ]))
+    proofs = detect.partial_use(sess)
+
+    assert len(proofs) == 1, "the fixture stopped firing, so the row below is not the row"
+    assert "profile.py" in proofs[0]["proof"], (
+        "the proof row never names the file it is a proof about, so a reader cannot check "
+        "it and a volunteer marks it bogus")
+    assert len(proofs[0]["proof"]) < len(cmd), "the window is not a window"
+
+
+def test_calibrate_writes_one_file_and_the_merge_reads_a_stack_of_them(tmp_path,
+                                                                      monkeypatch):
+    """The CLI half, because item 27's whole shape is *one command, one file* — and because
+    the flags are what a volunteer is handed in a message."""
+    _calibration_corpus(tmp_path, monkeypatch)
+    out = tmp_path / "sub" / "cal.txt"
+    assert cli.main(["--calibrate", str(out)]) == 0
+    assert out.is_file(), "the directory it was told to write into did not exist"
+
+    marked = out.read_text().replace(f"  [ ] {calibrate.READ_ALL}",
+                                     f"  [x] {calibrate.READ_ALL}")
+    marked = marked.replace("\n [ ] partial_use", "\n [b] partial_use", 1)
+    (tmp_path / "back.txt").write_text(marked)
+
+    assert cli.main(["--calibrate-merge", str(tmp_path / "back.txt")]) == 0

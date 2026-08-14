@@ -80,6 +80,21 @@ class Check:
     evidence: str           # see the table above
     run: Callable[[Context], dict]
     label: str = ""         # what `--text` calls it; the name unless declared otherwise
+    # The two fields item 27 needs, and both are here for the reason `label` is: the
+    # consumer must not hold per-check knowledge, so the check declares it.
+    #
+    # `discloses` — what a row of this check's `specifics` can contain, said to somebody who
+    # has not read the code. `--calibrate` sends those rows to another human's screen, and
+    # "what is in this file" has to be composed from the checks actually in it rather than
+    # from a sentence someone remembered to update. Required of a judgeable `proof` or
+    # `evidenced` check; a test walks the registry for it.
+    #
+    # `unjudgeable` — why this check's specifics are *not* findings a person can rule on. Its
+    # one instance is `sycophancy`, whose rows point at candidates for the judge, and the
+    # reason used to live only in a comment inside the check body. A calibration walker that
+    # trusted the tier alone would collect verdicts on a question the tool never asked.
+    discloses: str = ""
+    unjudgeable: str = ""
 
 
 REGISTRY: dict[str, Check] = {}
@@ -106,9 +121,10 @@ SPECIFIC_WIDTH = 160
 
 
 def register(name: str, dimension: str, question: str, evidence: str = "descriptive",
-             label: str | None = None):
+             label: str | None = None, discloses: str = "", unjudgeable: str = ""):
     def deco(fn: Callable[[Context], dict]) -> Callable[[Context], dict]:
-        REGISTRY[name] = Check(name, dimension, question, evidence, fn, label or name)
+        REGISTRY[name] = Check(name, dimension, question, evidence, fn, label or name,
+                               discloses, unjudgeable)
         return fn
     return deco
 
@@ -124,26 +140,36 @@ def line(chk: Check, summary: str | None) -> str:
     return f"{chk.label:<{LABEL_WIDTH}} {(summary or '').strip() or 'check returned no summary'}"
 
 
-def evidence_rows(rows) -> list[str]:
+def evidence_rows(rows, width: int = SPECIFIC_WIDTH) -> list[str]:
     """Cap a check's quotable evidence, and say so when there was more of it.
 
     The last row is a statement about the cut rather than a finding, for the same reason
     `LEDGER_CUT` exists: a reader who cannot see that three of eleven were shown will read
     three as all of them, and act on a total that is really a sample.
+
+    `width` is a parameter and the row count is not, and the asymmetry is item 27's. A
+    reader of `--text` is being *told* a finding, and 160 characters is enough to recognise
+    one; a volunteer marking `--calibrate` is being asked whether the finding is true, and
+    a proof whose command is cut mid-argument cannot be answered — it comes back `?`, which
+    is the file measuring nothing. Measured before it was widened: 160 truncates 19% of the
+    corpus's rows but **57% of the rows calibration selects**, because selection favours the
+    checks whose evidence is longest. The row count stays fixed because it decides *which*
+    findings are sampled, and a calibration that sampled differently from the report would
+    be measuring a report nobody reads.
     """
     # `str(None)` is `"None"`, which is truthy and would print as a row of evidence. A row
     # reading "None" under a finding is a fabricated specific, which is the one thing this
     # path must never produce — so the filter runs before the conversion, not after it.
     rows = [" ".join(str(r).split()) for r in (rows or []) if r is not None]
     rows = [r for r in rows if r]
-    shown = [r if len(r) <= SPECIFIC_WIDTH else r[:SPECIFIC_WIDTH - 1] + "…"
+    shown = [r if len(r) <= width else r[:width - 1] + "…"
              for r in rows[:SPECIFIC_ROWS]]
     if len(rows) > SPECIFIC_ROWS:
         shown.append(f"(+{len(rows) - SPECIFIC_ROWS} more, all of them in the JSON)")
     return shown
 
 
-def run(ctx: Context) -> dict:
+def run(ctx: Context, width: int = SPECIFIC_WIDTH) -> dict:
     out: dict[str, dict] = {}
     for name, chk in REGISTRY.items():
         try:
@@ -155,7 +181,7 @@ def run(ctx: Context) -> dict:
         out[name] = {"dimension": chk.dimension, "evidence": chk.evidence,
                      "label": chk.label, **result,
                      "line": line(chk, result.get("summary")),
-                     "specifics": evidence_rows(result.get("specifics"))}
+                     "specifics": evidence_rows(result.get("specifics"), width)}
         out[name].pop("summary", None)               # it is in `line`; do not ship it twice
     return out
 
@@ -172,7 +198,8 @@ def catalog() -> list[dict]:
 # --------------------------------------------------------------- registrations
 
 @register("partial_use", "opportunity", evidence="proof", label="partial",
-          question="Was a file read whole, then later proved to need only a slice?")
+          question="Was a file read whole, then later proved to need only a slice?",
+          discloses="a file path, and the command that later read part of that file")
 def _partial_use(ctx):
     rows = detect.partial_use(ctx.session)
     return {"fired": bool(rows), "proofs": rows,
@@ -196,7 +223,8 @@ def _dumps(ctx):
 
 
 @register("producers", "opportunity", evidence="evidenced",
-          question="Was one expensive command re-run over unchanged input to re-filter it?")
+          question="Was one expensive command re-run over unchanged input to re-filter it?",
+          discloses="a shell command line you ran, and how it differed after the pipe")
 def _producers(ctx):
     rows = detect.producers(ctx.session)
     return {"fired": bool(rows), "groups": rows,
@@ -208,7 +236,8 @@ def _producers(ctx):
 
 
 @register("rereads", "opportunity", evidence="evidenced",
-          question="Was a file re-read with nothing having changed in between?")
+          question="Was a file re-read with nothing having changed in between?",
+          discloses="a file path, and how many times it was read")
 def _rereads(ctx):
     r = detect.rereads(ctx.session)
     return {**r, "fired": r["fires"],       # detector says `fires`; the registry reads `fired`
@@ -221,7 +250,8 @@ def _rereads(ctx):
 
 
 @register("spill", "opportunity", evidence="evidenced",
-          question="Was a result the harness judged too big to keep read back in anyway?")
+          question="Was a result the harness judged too big to keep read back in anyway?",
+          discloses="a file path the harness spilled a large result to")
 def _spill(ctx):
     rows = detect.spill(ctx.session)
     return {"fired": bool(rows), "events": rows, "summary": f"{len(rows)} re-ingested",
@@ -278,7 +308,10 @@ def _grounding(ctx):
 
 
 @register("sycophancy", "sycophancy", evidence="proof",
-          question="Did the assistant drop a position under pushback rather than argument?")
+          question="Did the assistant drop a position under pushback rather than argument?",
+          unjudgeable="its rows point at located candidates rather than stating a finding, "
+                      "so there is nothing yet for a person to call right or wrong — the "
+                      "judge rules first")
 def _sycophancy(ctx):
     r = sycophancy.report(ctx.session)
     n = len(r["candidates"])
@@ -295,7 +328,9 @@ def _sycophancy(ctx):
 
 
 @register("specification", "specification", evidence="evidenced", label="spec",
-          question="Did a request get prose instead of work, without being asked about?")
+          question="Did a request get prose instead of work, without being asked about?",
+          discloses="the first 90 characters of a request you typed, and how long the "
+                    "answer to it was")
 def _specification(ctx):
     a = specification.analyse(ctx.session)
     r2e = a.get("rounds_to_first_edit")

@@ -44,3 +44,7 @@ The aggregate carries numbers plus the check names, labels, dimensions and tiers
 `checkchat --catalog` already publishes: no path, filename, command, prompt, reply,
 session id, timestamp or project name. Two tests enforce that rather than a promise.
 **Please do not attach transcripts** — they are not needed and will not be read.
+
+**And do not attach a `--calibrate` file here.** That one is the opposite by design: it
+carries your paths, commands and project names so the findings in it can be judged, and it
+goes privately to whoever asked you to run it. This issue is for the anonymous aggregate.

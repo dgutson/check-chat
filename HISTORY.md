@@ -1230,3 +1230,88 @@ lab notes, which is how they were recognised on sight rather than believed.
 *The roadmap budget is now binding on every item.* This entry left it at 416/420 lines and
 33,948/34,000 bytes, and two blocks moved here to get there. That is the mechanism working,
 and the next item will have to move one too.
+
+*A note moved here from `ROADMAP.md`'s Known Limitations when item 27 pushed that file over
+its budget, because this is where its explanation already was.* **`formats` fires 0/75, which
+is the designed answer and not a measurement of nothing.** Its controls are synthetic by
+construction, and that is not item 9's problem: this check is quiet because the condition is
+absent *here*, not because it has never been shown to fire.
+
+**27. `--calibrate` — the one file a volunteer marks, and the merge that reads a stack of
+them** (2026-08-14). `checkchat/calibrate.py`, an `observe` seam in `sweep.run`, two new
+registry fields, and a `PROOF_CMD_WIDTH` window in `detect`. 13 tests, 152 total; 14 of 14
+mutations caught.
+
+*What it is for.* `--sweep` carries item 9's first half — how often each check fires on
+somebody else's corpus. The second half is in no transcript: **whether the finding was
+right**. `partial_use` fires at 37% on a `proof` tier and item 21 found 6 of 48 of its proofs
+bogus, so the tier's honesty is unknown and is reaching users. Only someone who was in the
+conversation can settle it, and the whole cost of settling it is their attention — the
+colleagues who agreed to help are short of time, which is the constraint every decision below
+is shaped by.
+
+*The protocol is inverted, and that is the design.* Marking forty boxes in a text editor is
+fiddly enough that the file comes back empty, so a blank row means **the tool was right** and
+the volunteer marks only the rows it got wrong — typically five or six characters for the
+whole file. That is worth one honest caveat, and it is stated in the file, in the module and
+in `render_merge` rather than discovered later: **the rate this produces is biased low**,
+because a row skimmed and a row confirmed leave the same mark. `read_all` is what stops it
+being meaningless — a blank counts as `ok` only in a file whose reader said they read every
+row, and an unmarked file's blanks score as `unjudged` instead of quietly crediting the
+checks with them. Three verdicts, never more: `ok`, `bogus`, and a `?` that exists because a
+forced binary on a half-remembered row is a coin flip wearing a number's clothes.
+
+*The find: a proof row that never names the file it is a proof about.* `partial_use` composed
+its evidence as `cmd.strip()[:70]`, and on this corpus **22 of 37** command-proof rows cut
+before the filename — one showed a `grep` of `cmake.py` under a finding about `profile.py`,
+which reads as a false positive and is not one. `_proof_window` now takes the 70 characters
+*around* the basename instead of the first 70, and all 37 name their file. It surfaced only
+because somebody outside the project was about to be asked to rule on these rows, where a
+wrong `bogus` corrupts the measurement harder than a missing row does — but the same string
+is what `--text` prints, so the report has been showing a proof that proves nothing for as
+long as the row has existed. Same family as this file's own "a truncated echo of a value is
+not the value", one layer out: there the cut broke a re-check, here it broke a person's.
+
+*The width was measured, not chosen.* Over 300 evidence rows: p50 123, p90 175, p99 233, max
+319. `checks.SPECIFIC_WIDTH`'s 160 truncates 19% of all rows and **57% of the rows
+calibration selects**, because selection favours the checks whose evidence is longest. A
+proof cut mid-argument comes back `?`, so the cap that protects a summary is the cap that
+empties a calibration: `CALIBRATE_WIDTH = 240` leaves 1% cut and the file says how many. The
+row *count* stays at `SPECIFIC_ROWS`, deliberately — width decides whether a finding can be
+judged, count decides which findings are sampled, and a calibration that sampled differently
+from the report would be measuring a report nobody reads.
+
+*Selection is round-robin, never first-N.* `partial_use` at 37% would eat the whole budget
+and the rare checks would come back with nothing — a calibration of one check wearing the
+costume of a calibration of six, and it fails with the file looking full. Newest first within
+each check, which is the same direction the recall-decay risk points: a uniform sample of two
+years of sessions is an unbiased sample of things nobody remembers.
+
+*Two things a check now declares, for the reason it declares its label.* `discloses` says what
+a row of its evidence can contain, in the words of someone who has not read the code, and the
+file's "what is in this file" paragraph is composed from the checks actually present — so a
+check added tomorrow cannot ship its evidence to another person's screen under a paragraph
+that does not mention it. `unjudgeable` says why a check's specifics are *pointers* rather
+than findings; `sycophancy` is the one, its rows point at candidates for the judge, and a
+tier-only walk would have harvested verdicts on a question the tool never asked. Both reasons
+used to live in comments inside the check body, where no consumer could read them.
+
+*The seam, and the direction it is guarded in.* `sweep.run` gained `observe(session,
+results)`, because `--calibrate` needs the same population, the same two refusals and the same
+fork collapse plus the individual findings, and re-walking the corpus would be the second copy
+of the population logic that module exists to prevent. The aggregate is *declared* sendable,
+so the test asserts the whole structure is identical with and without an observer — a
+callback that could add to it would put somebody's filename in the file that gets pasted into
+public issues. The mutation that proved the test bites added `specific_chars` to `_numeric`,
+which is exactly the plausible edit that would do it.
+
+*One departure from the item as filed.* It said aggregate, then rows, then footer. The rows
+come first: the aggregate needs nothing from the reader, and a screen of statistics between
+the instructions and the boxes is a screen of somebody's ten minutes.
+
+*Left open, and found by reading the tool's own output.* Three of the seven `specification`
+rows on this corpus are `<task-notification>` records — machine-injected turns being counted
+as requests the user typed. They are true statements about the transcript and false ones about
+the person, and each one spends a slot of a volunteer's forty. Not fixed here: it is a change
+to what `specification` counts as a request, and it belongs with item 9's tuning rather than
+in the file that collects the evidence for it.

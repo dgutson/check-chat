@@ -125,7 +125,8 @@ def _numeric(result: dict) -> dict[str, int | float]:
             if isinstance(v, (int, float)) and not isinstance(v, bool)}
 
 
-def run(limit: int = 0, siblings: int = 12) -> dict:
+def run(limit: int = 0, siblings: int = 12, observe=None,
+        evidence_width: int = checks.SPECIFIC_WIDTH) -> dict:
     """Every transcript on this machine, through the shipping checks, as one aggregate.
 
     `limit` caps the files *considered*, newest first, and is reported — a cap that does not
@@ -135,6 +136,17 @@ def run(limit: int = 0, siblings: int = 12) -> dict:
     There is no `root` parameter: the corpus location is `CLAUDE_CONFIG_DIR`, which is what
     `discover` already reads and what the tests already set. A second way to say where the
     transcripts are is a second thing that can disagree with `collect()`.
+
+    `observe(session, results)` is item 27's seam and it is deliberately the *only* thing
+    that leaves this loop besides the aggregate. `--calibrate` needs the same population,
+    the same two refusals and the same fork collapse, plus the individual findings; walking
+    the corpus a second time to get them would be a second copy of the population logic,
+    which is the mistake this module was written to end. It must not touch the aggregate —
+    that output is *declared* sendable and a row of evidence in it would be somebody's
+    filename in a public issue, so the callback returns nothing and a test asserts the
+    aggregate is identical with and without one. `evidence_width` travels with it under the
+    same guarantee: it changes only the strings an observer is handed, and the aggregate
+    summarises numbers, so widening it cannot move a single figure the sweep sends.
     """
     started = time.time()
     memo = _Memo()
@@ -181,7 +193,9 @@ def run(limit: int = 0, siblings: int = 12) -> dict:
             contains=detect.PROBE_NEEDLE, exclude_forks_of=sess,
             loader=memo.load, prefilter=memo.contains,
         ) if siblings else []
-        results = checks.run(checks.Context(session=sess, others=others))
+        results = checks.run(checks.Context(session=sess, others=others), evidence_width)
+        if observe is not None:
+            observe(sess, results)
         counted += 1
         for name, r in results.items():
             meta.setdefault(name, {k: r.get(k) for k in ("dimension", "evidence", "label")})
