@@ -210,7 +210,7 @@ experienced engineer who demands pushback in his prompts and reaches for a scrip
 he reaches for a chat. That corpus is a negative control. It measures sycophancy at zero
 and re-asking at nearly zero, and those are the right answers *for him* — they establish
 no base rate and no threshold for the people the junior-auditor checks were built for.
-Tuning against it is forbidden by [ROADMAP.md](ROADMAP.md) item 9, because a threshold
+Tuning against it is forbidden by [ROADMAP.md](ROADMAP.md) item R-003, because a threshold
 fitted to the one population that cannot exhibit the behaviour is worse than none.
 
 What that item needs is a number, and a number can travel where a conversation cannot:

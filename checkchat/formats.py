@@ -2,8 +2,9 @@
 
 Item 25. `check-chat` reads another program's files, and it is **published**: it runs on
 machines whose Claude Code version the author has never seen. Three assumptions were named
-in `ROADMAP.md` as load-bearing and unchecked, and the shape of their failure is the one this
-project calls its most expensive — a **confident zero**. `cli_probes` returned 0 for its
+in the known-limitations register (`HISTORY.md`) as load-bearing and unchecked, and the
+shape of their failure is the one this project calls its most expensive — a **confident
+zero**. `cli_probes` returned 0 for its
 entire shipped life, was twice queued for deletion, and the number was correct every time.
 A renamed record or a reworded notice produces exactly that, with nothing to look wrong.
 

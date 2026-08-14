@@ -1322,9 +1322,10 @@ def test_the_roadmap_stays_inside_the_budget_that_makes_it_readable():
     same context and only one of them looks big."""
     text = (DOCS / "ROADMAP.md").read_text()
     lines, size = len(text.splitlines()), len(text.encode())
-    fix = ("move a finished item's detail to HISTORY.md and leave its one-line row in the "
-           "Shipped table — do not fix this by writing the next entry shorter than the "
-           "evidence deserves, which is the failure the budget exists to prevent")
+    fix = ("retire a finished item — delete it from ROADMAP.md, and put its entry and its "
+           "one-line index row in HISTORY.md — do not fix this by writing the next entry "
+           "shorter than the evidence deserves, which is the failure the budget exists to "
+           "prevent")
     assert lines <= ROADMAP_LINES, f"ROADMAP.md is {lines} lines (budget {ROADMAP_LINES}): {fix}"
     assert size <= ROADMAP_BYTES, f"ROADMAP.md is {size} bytes (budget {ROADMAP_BYTES}): {fix}"
 

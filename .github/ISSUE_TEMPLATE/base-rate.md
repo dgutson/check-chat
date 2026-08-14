@@ -8,7 +8,7 @@ labels: base-rate
 Every threshold in this repo was measured against one corpus belonging to one experienced
 engineer, and that corpus is a *negative control*: it measures sycophancy at zero and
 re-asking at nearly zero. Those are the right answers for him and they establish nothing
-about the people the junior-auditor checks were built for. ROADMAP.md item 9 forbids
+about the people the junior-auditor checks were built for. ROADMAP.md item R-003 forbids
 tuning against it. What unblocks that item is a number from a corpus nobody here can see.
 
 **Run this and paste the output.** Read it first — the `--text` form takes ten seconds to
