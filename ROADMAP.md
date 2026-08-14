@@ -15,7 +15,7 @@ The plugin is **installed and working end-to-end** on this machine: `/check-chat
 the deterministic pass takes ~280ms (~86ms of it before item 4 made the cross-session
 comparison actually load other sessions; `--siblings 0` returns it to ~20ms), the judge
 dispatches by `subagent_type`, and the report comes back. `--sweep` runs the same checks over
-the whole corpus in 4.7s. 128 tests pass, in the project's **own** virtualenv
+the whole corpus in ~6s. 130 tests pass, in the project's **own** virtualenv
 (`.venv/bin/pytest` from the repo root). Open work below is ordered by whether it blocks
 someone other than the author.
 
@@ -54,58 +54,40 @@ for `**<n>.` to find an entry.
 | 21 | 08-12 | A check's `specifics` reach the person required to quote them — and printing evidence found a `proof`-tier false positive |
 | 22 | 08-13 | `SKILL.md`'s rules are walked against the data that must satisfy them; the compaction seam depths were reaching nobody |
 | 23 | 08-13 | `--sweep`: the checks over the whole corpus, which is 69 sessions and not 319 files — and whose first find was its own conflated denominator |
+| 24 | 08-14 | The aggregate is *declared* sendable, not accidentally so — and the ask for one exists, which is the half with no code in it |
 
 ---
 
-## Now — item 24, with item 23 shipped underneath it
+## Now — item 25, with items 23 and 24 shipped underneath it
 
-Item 22 closed the last hop a test can reach, and this section then said nothing unblocked
-was *found*, with 6, 7 and 9 filed against "transcripts from a different user" — the one
-input that cannot be manufactured. That is item 10's misfiling, reproduced. Those items
-do not need transcripts: item 9 needs a base rate and a threshold, item 6 one comparison of
-two scorers, item 7 a repo's own vocabulary. Those are **numbers**, and the blocker looked
-permanent only because they were assumed to arrive inside the conversations holding them.
-The conversations cannot travel; the measurement can. Read item 12's rule before touching
-these, item 13 before trusting a corpus sweep, 14 before adding anything to the excerpt.
+**Items 23 and 24 were the fifth asking of "does a number reach a consumer who is not on
+this machine", and both halves are answered.** `--sweep` computes the base rates item 9 has
+been waiting for; the aggregate is now *declared* sendable rather than accidentally so, and
+the ask exists in `README.md` and `.github/ISSUE_TEMPLATE/`. What remains of them is not
+code: **item 9 unblocks when one other person acts**, and nothing here can hurry that.
 
-**Item 23 shipped 08-13 and changed the denominator of everything.** `--sweep` runs the
-checks over every session transcript on the machine. The corpus is **69 sessions**, not the
-"319 transcripts" this entry claimed: 64 of those files are subagent logs and 183 more have
-no assistant response at all. It also found its own `forks_collapsed` measuring two things at
-once, and it corroborated three numbers reached by hand. `HISTORY.md` has all of it. The
-base rates are now available to whoever asks; **`partial_use` fires at 39% on a `proof`
-tier**, which is the one worth a second look, and it must not be tuned here — item 9's rule.
+So the next thing this project can do for itself is the one class of defect it has never
+filed. Read item 12's rule before touching any check, and item 13 before trusting a sweep.
 
-**24. Make the sweep's aggregate *declared* safe to send, then ask for one.**
-This entry was written before item 23 existed and its premise was wrong, which is worth
-leaving on the record: it said the aggregate carries "absolute paths, filenames, `specifics`
-rows quoting the conversation, `proof` command text and the excerpt itself". That is true of
-`collect()`'s output and false of the sweep's. Audited leaf by leaf: **42 string leaves, all
-42 a registry constant** — a check name, label, dimension or tier. Every other leaf is a
-number. No path, no command, no prose, because `_numeric` admits only `int`/`float` and the
-metadata copied is the registry's. So there is no redaction to write.
-
-What is left is that this safety is a *property of a filter*, not a contract. Nothing fails
-when someone widens `meta` or passes a string through, and that is the ninth instance of the
-seam this project has found eight times, with the direction inverted: `cli.TEXT_OMITS` fails
-when a field reaches **nobody**, and this must fail when a field reaches **everybody** — the
-same walk over a producer's keys, default-deny instead of default-render, and the only
-instance where a miss is a harm and not a bug.
-- *Done when:* a string leaf that is not a registry constant fails a test, demonstrated by
-  adding one and watching it fail. Numbers stay allowed — a count about a session is not
-  content from it — but say so, and say that a one-session sweep is contentless rather than
-  anonymous, since its distributions are that session's own values
-- *Then, and it is the part with no code in it:* a README section and an issue template that
-  say *run `--sweep`, paste the JSON*. Without the ask this produces nothing and item 9 stays
-  where it is — that is who has to act, named as item 10's rule requires
-
-**What item 22 did not close.** The walks check that a field the skill names exists, and that
-a number it hands the user is printed where a person reads. They cannot check that a rule's
-*meaning* is satisfied — "quote the caveat's `warnings`" is checkable, "report only what
-fired" is not — and the hop past `--text`, the report a model composes, has no mechanism and
-is not getting one. **The pass by hand is still the only thing that finds a kind 4**; item
-22's mechanism only stops the ones it already found from returning. It found one on its third
-asking, having found one on each of the first two.
+**25. Name the format assumptions, and stop each one degrading into a zero.**
+This tool reads another program's output and is **published**: it runs on machines whose
+Claude Code version the author has never seen. Three assumptions are load-bearing and not
+one of them is checked. `spill` matches the harness's English (`Output too large … saved
+to:`). The compaction record format was recovered from a binary — and that route already
+produced two wrong lines of code, because the producer sets a field the written record does
+not have. Blinding relies on `tools: []` granting nothing, which is the opposite of what it
+does. Every one degrades to a **confident zero**, which this file's own lab notes call the
+most expensive failure it has found: `cli_probes` returned 0 for its entire shipped life,
+was twice queued for deletion, and the number was correct every time.
+- *Done when:* every assumption about the harness's format is named in one place, and each
+  one testable at runtime reports its absence as a `caveat` rather than as a zero —
+  demonstrated by handing a fixture the *other* format and watching the caveat appear where
+  the count used to be
+- *Not a version check.* The question is whether the shape the code expects is present in
+  the transcript it was handed, which is answerable without knowing whose harness wrote it
+- *The trap it must not fall into:* "the format is absent" and "the thing never happened"
+  look identical from inside a count, which is the distinction `sessions_compared` already
+  draws for `cli_probes` and the ledger draws for `wasted_effort`
 
 **How the defects have sorted, because it is what predicts the next one.** Four kinds, and
 this list once enumerated only the first. The reasoning is `HISTORY.md`'s "How items 19 and 21
@@ -118,9 +100,11 @@ changed what this project looks for"; this is the summary that section says it i
 
 Kinds 2–4 are one defect at increasing distance — excerpt, renderer, consumer — so the
 question is **"how far does a number travel before someone acts on it, and what checks each
-hop?"** All four hops have a walk; the fifth is prose. Kind 4 has been found three times for
-three askings, and **items 23 and 24 are the fifth asking**: does a number reach a consumer
-who is not on this machine. Which is why "nothing found" was never a claim about the code —
+hop?"** All four hops have a walk; the fifth is prose. Kind 4 was found three times for three
+askings, and **items 23 and 24 were the fifth** — does a number reach a consumer who is not
+on this machine — which found no leak and instead found the *walk* vacuous: the default-deny
+test passed against a corpus with nothing in it to deny. Four for five. Which is why
+"nothing found" was never a claim about the code —
 it was false in `dda7bbe` (`rereads` miscounting 71% of its findings), false in `ff26380`
 (item 16 sitting in the commit that shipped it), and false again on 08-12 with four leaks in
 the tree.
@@ -164,9 +148,11 @@ never built.
 They have only **synthetic** positive controls. Daniel's corpus is the negative control
 for the second time — median 1 turn to first edit, essentially zero re-asking — so it
 establishes no base rate and no threshold for the population these were built for.
-- *Unblocks when:* one other person runs item 23 and sends item 24's file. Not "when real
-  junior transcripts exist" — that filing is item 10's, and it sat for a day because the
-  passive voice hid the fact that a base rate is a *number* and numbers can be sent
+- *Unblocks when:* one other person runs `checkchat --sweep` and posts the JSON. Everything
+  on this side of that is shipped — the pass (23), the declared-safe aggregate and the ask
+  in `README.md` and `.github/ISSUE_TEMPLATE/` (24). Not "when real junior transcripts
+  exist": that filing is item 10's, and it sat for a day because the passive voice hid the
+  fact that a base rate is a *number* and numbers can be sent
 - Until then: do not tune thresholds against Daniel's sessions. That corpus can only show
   the detectors are quiet for an expert, which is the correct behaviour and not evidence
   of anything else.
@@ -244,7 +230,14 @@ establishes no base rate and no threshold for the population these were built fo
   is quiet: a re-typed `checkchat-$$` finds nothing, and the troubleshooting table reads the
   resulting `quotes: NOT CHECKED` as "you forgot `--against`". The default `${TMPDIR:-/tmp}`
   is world-readable on a multi-user box, leaving the blinded excerpt where another account can
-  read it — item 24's question about the same data.
+  read it. Item 24 settled the same question for the *sweep* and not for this: the aggregate
+  is declared contentless, the excerpt is the conversation.
+- **The sweep's aggregate is default-deny on its strings and weaker on its keys.** Item 24
+  walks every string *value* against `sweep.sendable_strings()`, derived from the registry,
+  so a string from anywhere else fails. Keys get only `isidentifier()` — which every path,
+  command and sentence a conversation can supply fails, and which an identifier-shaped
+  filename would pass. The rest is covered by a planted-filename control, and a control
+  covers exactly the content it plants.
 - **`looks_english` is an unvalidated stopword heuristic.** It only decides whether
   sycophancy candidates get *ranked*, so failing it degrades ordering, never recall.
 - **`spill` depends on harness English wording** (`Output too large … saved to:`). It will
@@ -374,7 +367,9 @@ Each cost a full re-run to discover, so they are recorded here rather than relea
   deleted. Rewritten against two reads of one file: one repeat, below `REREAD_MIN`, so
   `rereads` has a row and no finding, which is the only state that can tell the guard from its
   absence. Before writing a control, name the state in which the wrong behaviour would be
-  *visible*, and build that.
+  *visible*, and build that. Item 24 hit it inverted: a **default-deny** walk over a corpus
+  where no check fires has nothing to deny, and two mutations that leaked a filename into the
+  aggregate left it green until a session with content in it was swept alongside.
 - **A duplicate key in a mutated dict literal mutates nothing.** Injecting `"specifics": []`
   ahead of the real key left the real one last, so Python kept it and the test passed —
   reported as "the invariant is not enforced" when the code under test had not changed at all.

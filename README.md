@@ -28,7 +28,8 @@ claude plugin install check-chat
 ```
 
 Then `/check-chat` in any session. Python 3.10+, standard library only, nothing leaves
-your machine.
+your machine. The one exception is a file you have to ask for deliberately and can read
+before you send it — see [Send a base rate](#send-a-base-rate-this-is-the-ask).
 
 ## The rule it is built on
 
@@ -202,6 +203,44 @@ silently. English phrases survive only to *rank* candidates, never to select the
 when the session doesn't look like English the output says so instead of printing a
 zero. Those cases are permanent regressions in the test suite.
 
+## Send a base rate (this is the ask)
+
+Every threshold in here was measured against **one** corpus: 71 sessions belonging to one
+experienced engineer who demands pushback in his prompts and reaches for a script before
+he reaches for a chat. That corpus is a negative control. It measures sycophancy at zero
+and re-asking at nearly zero, and those are the right answers *for him* — they establish
+no base rate and no threshold for the people the junior-auditor checks were built for.
+Tuning against it is forbidden by [ROADMAP.md](ROADMAP.md) item 9, because a threshold
+fitted to the one population that cannot exhibit the behaviour is worse than none.
+
+What that item needs is a number, and a number can travel where a conversation cannot:
+
+```bash
+checkchat --sweep --text             # read it — the same data, in a form you can scan
+checkchat --sweep                    # the JSON to paste into an issue
+```
+
+It runs the shipping checks over every session transcript under `~/.claude/projects` and
+prints one aggregate: per check, how often it fired, and the distribution of every number
+it computes. A few seconds for a few hundred transcripts.
+
+**What is in the file.** Numbers, plus the check names, labels, dimensions and tiers this
+repo already publishes in `checkchat --catalog`. No path, no filename, no command, no
+prompt, no reply, no session id, no timestamp, no project name. That is not a promise, it
+is a test: one walks every string in the aggregate and fails on any the registry did not
+supply; another plants a filename in a fixture, proves the checks quote it back, and then
+asserts it does not reach the aggregate. Both were watched to fail before they were kept.
+
+**What the file does not give you is anonymity at n=1.** A count *about* a session is not
+content *from* it, which is what makes the aggregate sendable at all — but a one-session
+sweep is *contentless*, not anonymous. Every distribution in it is that one session's own
+value, so `n 1 min 4 max 4` is that session's 4. Sweep a real corpus, or don't send it.
+`--sweep-limit N` considers only the N newest transcripts, and the aggregate says so.
+
+Open an issue with the JSON, or the `--text` output if you prefer. Say roughly what kind
+of work the corpus is — that is the part the numbers cannot carry, and the part that makes
+them mean something. Nothing else is needed, and please do not send transcripts.
+
 ## Usage outside the skill
 
 ```bash
@@ -209,6 +248,7 @@ checkchat --text                     # human-readable summary
 checkchat --emit DIR                 # summary + evidence to disk (what the skill uses)
 checkchat --catalog                  # list registered checks
 checkchat --session <id>             # diagnose a session other than the newest
+checkchat --sweep --text             # every transcript on the machine, as one aggregate
 checkchat                            # full JSON
 ```
 

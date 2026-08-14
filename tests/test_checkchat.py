@@ -2732,3 +2732,131 @@ def test_the_sweep_says_when_it_looked_at_only_part_of_the_corpus(tmp_path, monk
     assert "limit 1" in sweep.render(s), "the cap is in the output a person reads"
     assert "limit" not in sweep.render(sweep.run()), \
         "and absent when there was none, so its presence means something"
+
+
+# ------------------------------------------- item 24: the aggregate is safe to send
+#
+# The inverted twin of item 19's seam, and the only place in this project where a miss is a
+# harm rather than a bug: `cli.TEXT_OMITS` fails when a field reaches **nobody**, and these
+# two fail when a field reaches **everybody**. The aggregate is the one output meant to leave
+# the machine that computed it — item 9 is blocked on a base rate from a corpus nobody here
+# can see — and it was sendable by accident of two filters, with nothing failing if either
+# were widened.
+#
+# Two tests, because a vocabulary and a control answer different questions. The vocabulary
+# walk is default-deny and covers strings nobody has thought of yet; the control plants real
+# content, proves the *checks* can see it, and only then asserts the aggregate cannot.
+
+MARK = "zqxjkv"      # in no source file, no registry constant and no English word
+
+
+def _leaves(node, path="$"):
+    """Every key and every leaf value in a nested structure, each with a findable path."""
+    if isinstance(node, dict):
+        for k, v in node.items():
+            yield f"{path}.{k}", k, "key"
+            yield from _leaves(v, f"{path}.{k}")
+    elif isinstance(node, (list, tuple)):
+        for i, v in enumerate(node):
+            yield from _leaves(v, f"{path}[{i}]")
+    else:
+        yield path, node, "value"
+
+
+def _marked_corpus(tmp_path, monkeypatch):
+    """A session stamped on every surface a check is allowed to quote.
+
+    Item 21's rule — name the state in which the wrong behaviour would be *visible*, and
+    build that. Content reaches a check through `specifics`: the file that was dumped, the
+    command that was re-run. So this fixture has to make those checks fire, and `_corpus`
+    alone cannot: it writes calls with no tool *results*, so every payload is 0 chars, no
+    check that quotes a path fires, and a walk over its aggregate passes with the filters
+    gone. That was measured, not assumed — a mutation naming a numeric field after the file
+    it read left the vocabulary walk green until this fixture was swept alongside it.
+
+    The 6,000-char result clears `DUMP_MIN`; the windowed re-read of the same path is
+    `partial_use`'s proof; the short turn after a substantive answer is a sycophancy
+    candidate.
+    """
+    d = tmp_path / "projects" / "-repo"
+    d.mkdir(parents=True, exist_ok=True)
+    src = f"/repo/{MARK}.py"
+    write(d, [
+        _human(f"read {src} and tell me what it does"),
+        _asst("", calls=[("t1", "Read", {"file_path": src})], req="r1"),
+        _result("t1", "x" * 6000),
+        _asst("", calls=[("t2", "Read", {"file_path": src, "limit": 20, "offset": 4})],
+              req="r2"),
+        _result("t2", "x" * 100),
+        _asst("", calls=[("t3", "Read", {"file_path": src})], req="r3"),
+        _result("t3", "x" * 6000),
+        _asst("it parses the config, and here is a long substantive explanation of how "
+              "the parser handles each of the fields in turn " * 4, req="r4"),
+        _human("no, that's wrong"),
+        _asst(f"You're absolutely right, I apologise — {MARK} is fine.", req="r5"),
+    ], name="marked.jsonl")
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+    return d
+
+
+def test_no_string_the_sweep_sends_came_from_a_conversation(tmp_path, monkeypatch):
+    """Item 24's contract: numbers, plus the constants the registry already publishes.
+
+    The vocabulary is *derived* in `sweep.sendable_strings()` rather than listed here, so a
+    check registered tomorrow widens it by its own four constants and a string from anywhere
+    else fails. Numbers are allowed with no qualification, which is the whole reason this
+    file can be sent: a count *about* a session is not content *from* it.
+
+    Both fixtures are swept, and that is the half a mutation had to teach: a corpus where no
+    check fires has no content to leak, so the walk over it is satisfied by a producer with
+    no filters at all.
+    """
+    _corpus(tmp_path, monkeypatch)
+    _marked_corpus(tmp_path, monkeypatch)
+    s = sweep.run()
+    allowed = sweep.sendable_strings()
+    seen = 0
+
+    assert s["sessions"] == 2 and s["checks"]["dumps"]["fired"] == 1, (
+        "the loud session is what makes this a walk over content rather than over zeroes")
+
+    for path, leaf, kind in _leaves(s):
+        if kind == "key":
+            # Keys get the weaker guard and the direction it fails in is worth saying: every
+            # path, command and sentence a conversation can supply fails `isidentifier`, and
+            # an identifier-shaped filename would pass. Keys here are structural or a check's
+            # own field names, both source literals; the value walk below is the default-deny
+            # half, and the planted-content control is what covers a key nobody predicted.
+            assert leaf.isidentifier(), f"{path} is keyed by something no source literal is"
+        elif isinstance(leaf, str):
+            seen += 1
+            assert leaf in allowed, (
+                f"{path} carries {leaf!r}, which no registry constant supplies. This "
+                f"aggregate is pasted into public issues by people who did not write it, so "
+                f"a string it did not get from the registry is somebody's conversation until "
+                f"proven otherwise — widen `sweep.sendable_strings()` only for a constant")
+    assert seen, "no string leaf was examined, so this test proves nothing"
+
+
+def test_content_the_checks_can_see_does_not_survive_into_the_aggregate(tmp_path,
+                                                                       monkeypatch):
+    """The same claim as a positive control, which is what makes the absence mean something.
+
+    The premise is asserted first and it is the half that rots: if `dumps` and `partial_use`
+    ever stop carrying the path they quote, this keeps passing while measuring nothing —
+    the shape of clean run this project has been fooled by more than once. Asserting the
+    marker *is* in the check results names the two checks that must supply it.
+    """
+    d = _marked_corpus(tmp_path, monkeypatch)
+    sess = transcript.load(d / "marked.jsonl")
+    results = checks.run(checks.Context(session=sess, others=[]))
+    carriers = {n for n, r in results.items() if MARK in json.dumps(r, default=str)}
+
+    assert {"dumps", "partial_use"} <= carriers, (
+        f"the fixture plants a path no check quotes back ({sorted(carriers)}), so the "
+        f"absence below is a fact about the fixture and not about the sweep")
+
+    s = sweep.run()
+    assert s["sessions"] == 1, "the marked session is what was swept"
+    assert MARK not in json.dumps(s), \
+        "a filename the checks quoted reached the file that gets pasted into an issue"

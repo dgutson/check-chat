@@ -29,6 +29,24 @@ is where that mistake scales. `discover.collapse_forks` is the function `sibling
 **`cli_probes` is the one check whose number depends on a sweep parameter**, because it is
 the one check that asks about other sessions. Its answer moves with `siblings`, so the
 value used is in the output beside it rather than left to be remembered.
+
+**The aggregate is numbers, and item 24 made that a contract instead of a coincidence.**
+This is the one output of the project meant to leave the machine that computed it — item 9
+needs a base rate from someone else's corpus, and a base rate is a number, so the aggregate
+travels where the conversations cannot. What makes it sendable is that every leaf is a
+number except the check names, labels, dimensions and tiers the registry already publishes.
+That was true on the day it was written and it was true by accident of two filters:
+`_numeric` admits only `int`/`float`, and `meta` copies three registry fields. Nothing failed
+if someone widened either. `sendable_strings()` is the declaration a test now walks, and it
+is the ninth instance of the seam this project has found eight times with the direction
+inverted — `cli.TEXT_OMITS` fails when a field reaches **nobody**, this fails when a field
+reaches **everybody**, and it is the only one where a miss is a harm rather than a bug.
+
+Numbers stay allowed without qualification, because **a count about a session is not content
+from it**. What that does not buy is anonymity at n=1: a one-session sweep is *contentless*,
+not anonymous. Every distribution in it is that session's own value — `n 1 min 4 max 4` is
+that session's 4 — so it discloses that session's shape precisely, while disclosing nothing
+that was said in it.
 """
 
 from __future__ import annotations
@@ -68,6 +86,18 @@ class _Memo:
         if key not in self.hits:
             self.hits[key] = discover.contains_bytes(path, needle)
         return self.hits[key]
+
+
+def sendable_strings() -> set[str]:
+    """Every string the aggregate is allowed to carry — derived, never listed.
+
+    Derived from the registry because a hand-written list would be a second copy of it, and
+    a second copy is the one thing this module refuses to hold. A check registered tomorrow
+    widens the vocabulary by exactly its own four constants and by nothing else, which is
+    the same property that lets `run()` summarise it with no edit here.
+    """
+    return {s for chk in checks.REGISTRY.values()
+            for s in (chk.name, chk.label, chk.dimension, chk.evidence)}
 
 
 def _stats(values: list[int | float]) -> dict:

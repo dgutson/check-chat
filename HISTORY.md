@@ -846,6 +846,16 @@ checking no data, which is precisely the `TEXT_OMITS` failure the same section w
 reproduced inside item 22. It now resolves against a validated `Verdict`, because the skill
 reads what survived `--verdict` rather than what the judge sent.
 
+*What it did not close, moved here from `ROADMAP.md` when item 24 filled the budget.* The
+walks check that a field the skill names exists, and that a number it hands the user is
+printed where a person reads. They cannot check that a rule's *meaning* is satisfied —
+"quote the caveat's `warnings`" is checkable, "report only what fired" is not — and the hop
+past `--text`, the report a model composes, has no mechanism and is not getting one. **The
+pass by hand is still the only thing that finds a kind 4**; item 22's mechanism only stops
+the ones it already found from returning. It found one on its third asking, having found one
+on each of the first two. The standing half of this is in `ROADMAP.md`'s renderer-seam
+limitation, which is where a session picking work would look for it.
+
 ---
 
 ## How items 19 and 21 changed what this project looks for
@@ -1072,3 +1082,57 @@ asserted `str(value) in block` and **passed with `p90` deleted from the renderer
 a block of small integers supplies a matching digit for free, so the assertion was checking
 that the block contains a number. Item 20's containment lesson, reproduced in the test
 written to honour item 19. Every stat is now pinned to its own label by regex.
+
+---
+
+**24. The aggregate is *declared* sendable, and the ask for one exists** (2026-08-14).
+`sweep.sendable_strings()`, two tests, a `README.md` section and
+`.github/ISSUE_TEMPLATE/base-rate.md`. 130 tests total. The half with no code in it is the
+half that matters: item 9 has been blocked for a week on a number from a corpus nobody here
+can see, and until 08-14 there was nowhere for anyone to send one.
+
+*The item's own filing was wrong about the thing it was filing, and that is worth keeping.*
+It said the aggregate carries "absolute paths, filenames, `specifics` rows quoting the
+conversation, `proof` command text and the excerpt itself", and specified a redaction pass.
+All of that is true of `collect()`'s output and false of the sweep's, because item 24 was
+written before item 23 existed and described the producer it imagined. Audited leaf by leaf
+first: **42 string leaves, all 42 a registry constant** — a check name, label, dimension or
+tier — and every other leaf a number. There was no redaction to write, only a contract to
+declare, and the item shrank to a fifth of its filed size on contact with the code.
+
+*What was actually missing was a direction.* The safety was a property of two filters:
+`_numeric` admits only `int`/`float`, and `meta` copies three registry fields. Nothing failed
+if either were widened. This is the ninth instance of the seam this project has found eight
+times, inverted — `cli.TEXT_OMITS` fails when a field reaches **nobody**, `sendable_strings()`
+fails when a field reaches **everybody** — and the only one where a miss is a harm rather than
+a bug, because the file's purpose is to be pasted into a public issue by someone who did not
+write it. The vocabulary is *derived* from the registry rather than listed, so a check
+registered tomorrow widens it by exactly its own four constants.
+
+*Two of the first seven mutations passed, and both were about the fixture rather than the
+test.* One copied `summary` into `meta` to simulate a leak — but `checks.run` pops `summary`
+into `line`, so the mutation shipped a `None` and the walk correctly ignored it: a mutation
+that does not change the output in the direction it claims is not a test failing to catch it.
+The other named a numeric field after the file it read, and **the vocabulary walk stayed
+green** — because `_corpus` writes calls with no tool *results*, so every payload is 0 chars,
+no check that quotes a path fires, and a default-deny walk over an aggregate with nothing in
+it to deny is satisfied by a producer with no filters at all. This is item 21's "negative
+control on an input that cannot show the effect", arriving inverted, in the test written to
+close the last hop. Fixed by sweeping a marked session alongside; all seven then failed.
+
+*The second test is the one that will still mean something in a year.* It plants a filename
+in a session, asserts the *checks* quote it back — naming `dumps` and `partial_use`, the two
+whose payload carries a path — and only then asserts it is absent from the aggregate. The
+premise is asserted first because it is the half that rots: if those checks ever stop
+carrying the path, a control without it keeps passing while measuring nothing.
+
+*What the ask says, and the one thing it refuses to claim.* Numbers stay allowed without
+qualification — a count *about* a session is not content *from* it — but the README and the
+template both say a one-session sweep is **contentless, not anonymous**: every distribution
+in it is that session's own value, so `n 1 min 4 max 4` is that session's 4. The checklist
+asks for more than one session and asks what kind of work the corpus is, which is the part
+the numbers cannot carry.
+
+*The corpus grew while this was written* — 69 sessions on 08-13, **71** on 08-14, because the
+sessions building this tool are themselves transcripts under `~/.claude/projects`. Any figure
+in this file is a reading, not a constant.
