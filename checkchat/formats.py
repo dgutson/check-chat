@@ -32,10 +32,12 @@ transcript in front of them and which are being taken on faith.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
-from typing import Callable
+from pathlib import Path
+from typing import Callable, Iterable
 
-from . import detect
+from . import detect, transcript
 from .transcript import Session
 
 # Record types the parser reads. Split by `system` subtype because that is where its branch
@@ -216,6 +218,97 @@ ASSUMPTIONS: list[Assumption] = [
 ]
 
 
+# A record type is another program's identifier, and the census is written to be pasted into
+# an issue by somebody whose Claude Code version nobody here has seen. Undeclared names are
+# the whole point of the output and are the one thing no allow-list can hold, so the guard is
+# on their *shape*: what fails it is dropped and counted, never passed through. Item 24's
+# default-deny, applied to the one output whose interesting values are unknown by construction.
+_TYPE_SHAPE = re.compile(r"[a-z][a-z0-9_/-]{0,39}")
+
+# What was counted, carried in the output rather than left to the reader. A census that does
+# not say what it walked is the confident zero this module exists for: "no undeclared types"
+# and "no undeclared types *in the files I looked at*" are the same sentence otherwise.
+CENSUS_POPULATION = "every session transcript on this machine, subagent logs excluded"
+
+
+def census(paths: Iterable[Path] | None = None,
+           loader: Callable[[Path], Session] = None) -> dict:
+    """Every record type in a corpus, counted, against what this module declares.
+
+    R-002. `IGNORED` makes thirteen claims about records this parser skips and `HANDLED`
+    three about records it reads; all sixteen came out of a throwaway script in a temp
+    directory that no longer exists. A claim that cannot be re-run is a claim nobody can
+    check, and this parser's failure mode is silence — a renamed record is skipped without a
+    trace while every count stays arithmetically correct and describes a fraction of the
+    conversation.
+
+    **Both directions, because a rename is only legible as a pair.** `undeclared` is a type
+    in the corpus that no declaration covers; `unseen` is a declaration the corpus no longer
+    backs. A harness renaming `attachment` produces one of each, and either alone reads as
+    something else — a new record type having appeared, or a type having fallen out of use.
+
+    The counts come from `transcript.load`'s own census rather than from a second reader, so
+    what is reported is what the shipping parser saw, truncation and all. `paths` defaults to
+    `discover.all_transcripts()`, which is every session transcript on this machine and
+    **not** the subagent logs one level deeper — the population is named in the output
+    because a census that does not say what it counted is the confident zero again.
+    """
+    from . import discover                      # here: `discover` imports this module's peer
+    load = loader or transcript.load
+    files = list(paths) if paths is not None else discover.all_transcripts()
+
+    records: dict[str, int] = {}
+    seen_in: dict[str, int] = {}
+    dropped = 0
+    for path in files:
+        for kind, n in load(path).record_types.items():
+            if not _TYPE_SHAPE.fullmatch(kind):
+                dropped += 1
+                continue
+            records[kind] = records.get(kind, 0) + n
+            seen_in[kind] = seen_in.get(kind, 0) + 1
+
+    declared = {**{k: "handled" for k in HANDLED}, **{k: "ignored" for k in IGNORED}}
+    types = [{"type": k, "records": records[k], "files": seen_in[k],
+              "declared": declared.get(k, "undeclared")}
+             for k in sorted(records, key=lambda k: (-records[k], k))]
+    return {
+        "population": CENSUS_POPULATION,
+        "files": len(files),
+        "records": sum(records.values()),
+        "types": types,
+        "undeclared": [t["type"] for t in types if t["declared"] == "undeclared"],
+        "unseen": sorted(set(declared) - set(records)),
+        "handled": len(HANDLED),
+        "ignored": len(IGNORED),
+        "dropped": dropped,
+    }
+
+
+def render_census(d: dict) -> str:
+    """The census as something a person reads before deciding whether to file an issue."""
+    out = [f"{d['records']:,} records of {len(d['types'])} types "
+           f"in {d['files']:,} files — {d['population']}", ""]
+    for t in d["types"]:
+        mark = "  " if t["declared"] != "undeclared" else "!!"
+        out.append(f" {mark} {t['type']:<28} {t['records']:>8,}  in {t['files']:>4} files"
+                   f"  [{t['declared']}]")
+    out.append("")
+    if d["undeclared"]:
+        out.append(f"{len(d['undeclared'])} type(s) this parser has no branch for and no note "
+                   f"about: {', '.join(d['undeclared'])}")
+    if d["unseen"]:
+        out.append(f"{len(d['unseen'])} declaration(s) this corpus does not back — a rename "
+                   f"looks like this beside a new undeclared type: {', '.join(d['unseen'])}")
+    if d["dropped"]:
+        out.append(f"{d['dropped']} type name(s) dropped for not being shaped like an "
+                   f"identifier, so this output stays safe to paste")
+    if not (d["undeclared"] or d["unseen"]):
+        out.append("every record type in this corpus is declared, and every declaration is "
+                   "backed by a record in it")
+    return "\n".join(out)
+
+
 def probe(sess: Session) -> list[str]:
     """Every assumption whose shape this transcript contradicts.
 
@@ -225,4 +318,5 @@ def probe(sess: Session) -> list[str]:
     return [w for a in ASSUMPTIONS if a.probe for w in (a.probe(sess),) if w]
 
 
-__all__ = ["Assumption", "ASSUMPTIONS", "HANDLED", "IGNORED", "probe"]
+__all__ = ["Assumption", "ASSUMPTIONS", "HANDLED", "IGNORED", "census", "probe",
+           "render_census"]

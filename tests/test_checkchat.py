@@ -3047,6 +3047,110 @@ def test_a_missing_shape_is_told_from_a_thing_that_never_happened(tmp_path):
     assert any("preTokens" in w for w in formats.probe(stated)), formats.probe(stated)
 
 
+def test_the_census_reports_a_type_nobody_declared(tmp_path):
+    """R-002, direction one: the parser's failure mode is silence, at corpus scale.
+
+    `formats.IGNORED` makes thirteen claims about record types this parser skips, and every
+    one of them came out of a throwaway script in a temp directory — the mistake item 23 was
+    written to end, made by the item written to end it. A claim that cannot be re-run is a
+    claim nobody can check, so the census is a function that ships.
+    """
+    d = tmp_path / "projects" / "-repo"
+    d.mkdir(parents=True)
+    write(d, [_human("go"), _asst("done"),
+              {"type": "attachment", "timestamp": "2026-08-08T00:00:00Z"},
+              {"type": "assistant-v2", "timestamp": "2026-08-08T00:00:00Z"},
+              {"type": "assistant-v2", "timestamp": "2026-08-08T00:00:00Z"}], name="a.jsonl")
+
+    c = formats.census([d / "a.jsonl"])
+    by = {t["type"]: t for t in c["types"]}
+    assert by["assistant-v2"] == {"type": "assistant-v2", "records": 2, "files": 1,
+                                  "declared": "undeclared"}
+    assert by["attachment"]["declared"] == "ignored"
+    assert by["user"]["declared"] == "handled"
+    assert c["undeclared"] == ["assistant-v2"], "the finding is the list, not a count to read"
+    assert c["files"] == 1 and c["records"] == 5
+
+
+def test_the_census_reports_a_declaration_the_corpus_no_longer_backs(tmp_path):
+    """R-002, direction two, and the one a rename needs.
+
+    A harness that renames `attachment` to `prompt-attachment` produces *two* findings, and
+    only together do they say what happened: the new name arrives undeclared, and the old
+    name — still carrying its reason in `IGNORED`, still being counted on by anyone reading
+    the module — stops appearing anywhere. Reporting only the first would read as a new
+    record type having been added.
+    """
+    d = tmp_path / "projects" / "-repo"
+    d.mkdir(parents=True)
+    write(d, [_human("go"), _asst("done")], name="a.jsonl")
+
+    c = formats.census([d / "a.jsonl"])
+    assert "attachment" in c["unseen"], "a declaration the corpus does not back is a stale claim"
+    assert "user" not in c["unseen"] and "assistant" not in c["unseen"]
+    assert set(c["unseen"]) <= set(formats.HANDLED) | set(formats.IGNORED), \
+        "`unseen` is about declarations, so nothing else can appear in it"
+
+
+def test_the_census_carries_no_string_it_did_not_read_off_a_record_type(tmp_path):
+    """Item 24's question for a second output: this one is written to be pasted into an
+    issue by somebody on a Claude Code version nobody here has seen, which is the only way
+    a claim about another program's records gets checked at all.
+
+    Default-deny, and the hard part is that the interesting strings are *undeclared* type
+    names — the one thing no allow-list can contain. So the guard is on their shape, and
+    anything failing it is dropped and counted rather than passed through.
+    """
+    d = tmp_path / "projects" / "-repo"
+    d.mkdir(parents=True)
+    write(d, [_human("go"), _asst("done"),
+              {"type": f"/home/daniel/secret-{MARK}.py", "timestamp": "2026-08-08T00:00:00Z"},
+              {"type": "x" * 90, "timestamp": "2026-08-08T00:00:00Z"}], name="a.jsonl")
+
+    c = formats.census([d / "a.jsonl"])
+    # Derived, never listed — `sweep.sendable_strings()`'s rule for the same reason. The
+    # field names come off the structure itself, so a key added tomorrow widens this by
+    # exactly itself and a *value* added tomorrow does not widen it at all.
+    allowed = (set(formats.HANDLED) | set(formats.IGNORED)
+               | {k for _, k, kind in _leaves(formats.census([])) if kind == "key"}
+               | {formats.CENSUS_POPULATION})
+    for path, node, kind in _leaves(c):
+        if isinstance(node, str):
+            assert node in allowed or re.fullmatch(r"[a-z][a-z0-9_/-]{0,39}", node), \
+                f"{path} carries {node!r}, which is not a record type and not a field name"
+    assert MARK not in json.dumps(c), "a path-shaped type name reached the output"
+    assert c["dropped"] == 2, "and what was dropped is reported rather than silently missing"
+
+
+def test_the_census_is_reachable_from_the_command_line_and_says_so_in_its_exit_code(
+        tmp_path, monkeypatch, capsys):
+    """A census nobody can run is the throwaway script again, one directory further along.
+
+    The exit code is the half that makes it usable after a Claude Code upgrade without
+    anyone reading a paragraph: 0 when the declarations and the corpus agree, non-zero when
+    they do not. Both states are built here, because a code that is always 0 passes any test
+    that only ever looks at the clean one.
+    """
+    d = tmp_path / "projects" / "-repo"
+    d.mkdir(parents=True)
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+    write(d, [_human("go"), _asst("done")], name="a.jsonl")
+
+    assert cli.main(["--census", "--text"]) == 1, "this corpus backs no `attachment` record"
+    out = capsys.readouterr().out
+    assert "attachment" in out and formats.CENSUS_POPULATION in out, \
+        "the flagged names and what was walked both have to reach the person running it"
+
+    write(d, [_human("go"), _asst("done"),
+              *({"type": k, "timestamp": "2026-08-08T00:00:00Z"} for k in formats.IGNORED
+                if "/" not in k),
+              *({"type": "system", "subtype": k.split("/")[1],
+                 "timestamp": "2026-08-08T00:00:00Z"} for k in formats.IGNORED if "/" in k),
+              _boundary({"trigger": "auto", "preTokens": 100})], name="b.jsonl")
+    assert cli.main(["--census"]) == 0, "every declaration is backed and nothing is undeclared"
+    assert json.loads(capsys.readouterr().out)["undeclared"] == []
+
+
 def test_the_notification_probe_fires_on_the_tag_it_could_not_strip(tmp_path):
     """R-001's assumption, and the honest statement of what its probe can see.
 

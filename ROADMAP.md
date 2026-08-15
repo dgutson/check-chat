@@ -18,22 +18,19 @@ number; read this one to pick a task. The rule the project is built on governs b
 test has been watched to fail.**
 
 Items were renumbered when this file adopted the `R-` scheme. `HISTORY.md`, docstrings and
-commit messages refer to the old bare numbers, so: R-002 was 26, R-003 was 9, R-004 was 6,
-R-005 was 7. Items 1–5 and 10–27 are shipped and retired to `HISTORY.md` under their
-original numbers, as is R-001, which was new.
+commit messages refer to the old bare numbers, so: R-003 was 9, R-004 was 6, R-005 was 7.
+Items 1–5 and 10–27 are shipped and retired to `HISTORY.md` under their original numbers,
+as are R-001 and R-002.
+
+**Nothing here is startable by the author.** R-003 waits on a person, and the two items
+behind it wait on R-003. That is the honest state rather than an empty file: the work left
+in this project needs a corpus that is not Daniel's. If that wait is to be shortened, it is
+shortened by asking someone, which is not a task this file can hold. Candidates for
+promotion, if the wait proves long, are in `HISTORY.md`'s known-limitations register — the
+`__main__`-held needle, the world-readable `${TMPDIR:-/tmp}` excerpt, and `partial_use`'s
+quoted-filename miss are all accepted costs today and would be real items if that changed.
 
 ---
-
-## Now
-
-### R-002 — Ship the record census
-
-- **Category:** Formats
-- **What:** Move the record-type census into shipping code — a function in `checkchat/`, beside the claims it backs in `checkchat/formats.py` — and make it reachable from the CLI, so the counts behind `formats.IGNORED`'s thirteen entries are produced by the tool rather than recalled.
-- **Why:** Every one of those thirteen claims about record types this parser skips came out of a throwaway script in a temp directory that no longer exists — item 23's mistake, made by the item written to end it. A harness version bump that renames or repurposes a record type currently changes nothing any test can notice.
-- **Outcome:** The counts recorded in `HISTORY.md` item 25 are reproduced by a function in `checkchat/`, and a claim about a record type is checkable against a corpus by running the tool.
-- **Blocked-by:** —
-- **Enables:** —
 
 ## Next
 

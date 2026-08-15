@@ -46,6 +46,7 @@ the item *decided*; the entry says what it measured and what the filing got wron
 | 25 | 08-14 | The format assumptions are named and four are probed — and the census found a field the code said the harness does not write |
 | 27 | 08-14 | `--calibrate`: one file a volunteer marks, one merge reads a stack — and a `proof` row that never named its file |
 | R-001 | 08-14 | Trap 7 — a background agent finishing is not a request the user typed; 11 phantom turns in one session, and `effort` was reading them too |
+| R-002 | 08-14 | `--census`: the record-type claims are produced by shipping code, and a rename is legible as a pair — an undeclared type beside a declaration nothing backs |
 
 ---
 
@@ -1391,6 +1392,46 @@ counts is what noticed the new entry.
 3 tests plus the probe's two-state test, 156 total; every one watched to fail first — and the
 first attempt to watch them was itself the lab note about mutations that error rather than
 fail, having left a bare comma in the regex.
+
+**R-002. The record census ships, and a rename is legible as a pair** (2026-08-14).
+`formats.census()` counts every record type on the machine against `HANDLED` and `IGNORED`,
+`--census` runs it, and `render_census` is the renderer a person reads. Item 25's sixteen
+types were measured by a script in a temp directory that no longer exists — item 23's mistake
+made by the item written to end it — so the claims in `IGNORED` had become unre-runnable
+assertions about another program's records. 4 tests, 160 total.
+
+*Both directions, which is the part worth having.* `undeclared` is a type in the corpus no
+declaration covers; `unseen` is a declaration the corpus no longer backs. Only the pair says
+"rename": a harness renaming `attachment` to `prompt-attachment` produces one of each, and
+either alone reads as something else entirely — a record type having been added, or one
+having fallen out of use. The first direction is `_unknown_records` at corpus scale; the
+second did not exist before and is the half a version bump actually trips.
+
+*It reproduces item 25.* Same 16 types, same 3 handled and 13 ignored, nothing undeclared and
+nothing unseen — on 456 files where that census walked 258, with every count grown in
+proportion and `agent-name` still 29 records in exactly 1 file. The counts come from
+`transcript.load`'s own `record_types` rather than from a second reader, so what is reported
+is what the shipping parser saw, truncation included: measure the shipping function, and here
+the function is the one whose silence the census exists to break.
+
+*Default-deny on an output whose interesting values are unknown by construction.* The census
+is written to be pasted into an issue by somebody running a Claude Code nobody here has seen,
+and its findings are *undeclared* type names — the one thing an allow-list cannot contain. So
+the guard is on their shape (`[a-z][a-z0-9_/-]{0,39}`), what fails it is dropped and counted
+rather than passed through, and the count is printed. The vocabulary walk that pins this is
+item 24's, with the field names derived off the structure instead of listed, and a planted
+path-shaped type name is the control.
+
+*Exit code, so an upgrade check can be a line in a script.* 0 when the declarations and the
+corpus agree, 1 when they do not. Watched to fail: pinning it to 0 leaves the clean-corpus
+assertion green, which is why the test builds both states.
+
+*What it does not reproduce, stated rather than implied.* Item 25's `queue-operation`
+breakdown — 62 enqueued, 37 re-arriving as `user` records, 22 machine tags, 2 slash commands,
+1 never sent — is still a one-off measurement. It is a claim about records the parser
+deliberately skips, so it cannot go through `record_types` at all and would need a second
+reader of the raw lines. Left out on purpose; the type-level census is what makes a rename
+noticeable, which is the reason the item was filed.
 
 ---
 

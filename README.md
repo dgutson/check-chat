@@ -278,10 +278,21 @@ checkchat --emit DIR                 # summary + evidence to disk (what the skil
 checkchat --catalog                  # list registered checks
 checkchat --session <id>             # diagnose a session other than the newest
 checkchat --sweep --text             # every transcript on the machine, as one aggregate
+checkchat --census --text            # record types vs. what this parser declares it reads
 checkchat --calibrate [PATH]         # the volunteer's file: findings with a verdict box each
 checkchat --calibrate-merge F...     # returned files -> false-positive rate per check
 checkchat                            # full JSON
 ```
+
+**Run `--census` after a Claude Code upgrade.** This tool reads another program's files,
+and its failure mode is silence: a record type that gets renamed is skipped without a
+trace, leaving every count arithmetically correct and describing a fraction of the
+conversation. The census counts every record type on the machine against what
+`formats.py` declares it handles and skips, and reports the disagreement in both
+directions — a type nobody declared, and a declaration the corpus no longer backs. A
+rename shows up as one of each; either alone means something different. It exits non-zero
+when anything is flagged, carries no filenames or content, and is meant to be pasted into
+an issue.
 
 `checkchat` lands on `PATH` when the plugin is installed — Claude Code adds every
 plugin's `bin/` directory, and the launcher resolves its own location. From a source

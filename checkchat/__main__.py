@@ -21,8 +21,8 @@ import sys
 import time
 from pathlib import Path
 
-from . import (calibrate, checks, detect, digest, discover, inventory, sweep, transcript,
-               verdict)
+from . import (calibrate, checks, detect, digest, discover, formats, inventory, sweep,
+               transcript, verdict)
 
 
 def collect(cwd: str, session_id: str | None = None, siblings: int = 12) -> dict:
@@ -243,6 +243,10 @@ def parser() -> argparse.ArgumentParser:
     ap.add_argument("--calibrate-merge", metavar="FILE", nargs="+", default=None,
                     help="read returned calibration files and report the false-positive "
                          "rate per check, then exit")
+    ap.add_argument("--census", action="store_true",
+                    help="count every record type on this machine against what this parser "
+                         "declares it handles and skips, and exit — run it after a Claude "
+                         "Code upgrade, and paste it into an issue if anything is flagged")
     return ap
 
 
@@ -278,6 +282,15 @@ def main(argv: list[str] | None = None) -> int:
         s = sweep.run(limit=a.sweep_limit, siblings=a.siblings)
         print(sweep.render(s) if a.text else json.dumps(s, indent=1, default=str))
         return 0
+
+    if a.census:
+        # Beside `--sweep` and for the same reason: this is a question about the corpus, not
+        # a report about this session, so it must not need one to exist.
+        c = formats.census()
+        print(formats.render_census(c) if a.text else json.dumps(c, indent=1, default=str))
+        # Non-zero when a declaration and the corpus disagree, so an upgrade check can be a
+        # command in a script rather than a paragraph somebody reads.
+        return 1 if (c["undeclared"] or c["unseen"]) else 0
 
     if a.calibrate_merge is not None:
         # Daniel is handed files, not numbers, and merging them by hand is item 23's mistake
