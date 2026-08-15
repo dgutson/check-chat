@@ -2,7 +2,7 @@
 
 Self-contained on purpose — check-chat is meant to be installable on its own.
 
-Six things about the wire format are easy to get wrong, and each of them silently
+Seven things about the wire format are easy to get wrong, and each of them silently
 corrupts every count downstream:
 
 1. One API response is written as SEVERAL records, one per content block, sharing a
@@ -35,6 +35,23 @@ corrupts every count downstream:
    summary, not the text. Re-asking there is correct behaviour rather than `confusion`,
    and a constraint stated above it was *lost* rather than disregarded. So the seam is
    kept (see `Compaction`) rather than merely skipped.
+
+7. A **background agent finishing** is posted as a `user` record whose whole content is a
+   `<task-notification>` block — trap 5 a third time, and the one that hid longest,
+   because it does not look like machinery. It is long, it is prose, and it carries the
+   subagent's `<result>` verbatim, so it reads as something a person pasted. 15 of them
+   on the development corpus, every one the entire content of its record and every one
+   closed.
+
+   The damage is not the inflated count, it is every check that reads a turn. A
+   notification is never acted on, the reply to it is prose, and prose about a subagent's
+   findings asks nothing back — `specification`'s three firing conditions, met by a record
+   no human wrote, and it went out to a volunteer that way: 3 of the 7 rows in item 27's
+   calibration file. `effort` was reading them too and nobody predicted that, because a
+   turn with one short answer and no calls is also its definition of an expensive setting
+   spent on nothing. One session reported 5 such turns and has none. **A phantom turn is a
+   defect in every per-turn check at once**, which is the lesson traps 5 and 6 each taught
+   in one dimension only.
 """
 
 from __future__ import annotations
@@ -51,7 +68,11 @@ _STRIP = re.compile(
     r"|<(command-\w+)>.*?</\1>"
     # The harness writes this as a user record of its own. Left in, it becomes a turn
     # nobody typed — see trap 5 above.
-    r"|\[Request interrupted by user[^\]]*\]",
+    r"|\[Request interrupted by user[^\]]*\]"
+    # Trap 7, the same phantom wearing a subagent's report. Matched as a closed block
+    # rather than by dropping any record that mentions the tag, so a human quoting one
+    # keeps everything they wrote around it.
+    r"|<task-notification>.*?</task-notification>",
     re.S,
 )
 

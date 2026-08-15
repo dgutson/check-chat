@@ -4,9 +4,9 @@ Item 25. `check-chat` reads another program's files, and it is **published**: it
 machines whose Claude Code version the author has never seen. Three assumptions were named
 in the known-limitations register (`HISTORY.md`) as load-bearing and unchecked, and the
 shape of their failure is the one this project calls its most expensive — a **confident
-zero**. `cli_probes` returned 0 for its
-entire shipped life, was twice queued for deletion, and the number was correct every time.
-A renamed record or a reworded notice produces exactly that, with nothing to look wrong.
+zero**. `cli_probes` returned 0 for its entire shipped life, was twice queued for deletion,
+and the number was correct every time. A renamed record or a reworded notice produces
+exactly that, with nothing to look wrong.
 
 **The trap this module exists inside.** "The format is absent" and "the thing never happened"
 are the same observation from inside a count. So a probe here fires only when the session
@@ -137,6 +137,18 @@ def _spill_notice(sess: Session) -> str:
             f"`spill` can still see this one by its path and would miss one without it")
 
 
+def _notification_residue(sess: Session) -> str:
+    # The precondition is the evidence itself: the tag surviving `clean()` means the block
+    # did not match, which is the only drift shape this can see. A *renamed* tag is
+    # invisible here and is stated in `degrades` rather than implied to be covered.
+    left = [t for t in sess.turns if "task-notification" in t.prompt]
+    if not left:
+        return ""
+    return (f"{len(left)} turn(s) still carry a `<task-notification>` tag after cleaning, so "
+            f"the block is no longer closed the way `transcript._STRIP` matches it: trap 7 "
+            f"is back and each one is a request the user did not type")
+
+
 ASSUMPTIONS: list[Assumption] = [
     Assumption(
         key="record_types",
@@ -183,6 +195,15 @@ ASSUMPTIONS: list[Assumption] = [
                  "highest-signal moment it has",
         why_unprobed="the marker is an ordinary `str` user record with no flag to key on, so "
                      "its absence and a session without interruptions are the same reading",
+    ),
+    Assumption(
+        key="task_notification",
+        reads="`<task-notification>…</task-notification>` as the whole content of a `user` "
+              "record, stripped by `transcript._STRIP`",
+        degrades="trap 7 returns: a background agent's report counts as a request the user "
+                 "typed, and `specification` reports it as prose that answered nobody — 3 of "
+                 "7 rows in the first calibration file were this",
+        probe=_notification_residue,
     ),
     Assumption(
         key="blinding",

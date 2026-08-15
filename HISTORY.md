@@ -45,6 +45,7 @@ the item *decided*; the entry says what it measured and what the filing got wron
 | 24 | 08-14 | The aggregate is *declared* sendable, not accidentally so — and the ask for one exists, which is the half with no code in it |
 | 25 | 08-14 | The format assumptions are named and four are probed — and the census found a field the code said the harness does not write |
 | 27 | 08-14 | `--calibrate`: one file a volunteer marks, one merge reads a stack — and a `proof` row that never named its file |
+| R-001 | 08-14 | Trap 7 — a background agent finishing is not a request the user typed; 11 phantom turns in one session, and `effort` was reading them too |
 
 ---
 
@@ -1350,6 +1351,47 @@ the person, and each one spends a slot of a volunteer's forty. Not fixed here: i
 to what `specification` counts as a request, and it belongs with item 9's tuning rather than
 in the file that collects the evidence for it. Filed as R-001 in `ROADMAP.md`.
 
+**R-001. A background agent finishing is not a turn — trap 7** (2026-08-14).
+`transcript._STRIP` now removes a closed `<task-notification>` block, which drops the record
+through the same door traps 5 and 6 use: `clean()` empties it, and `load()` only builds a
+`Turn` from text that survives. One line of regex; the work was in knowing it was safe and
+in finding out what else had been reading these.
+
+*Why it hid for so long.* The interruption marker is one bracketed line and the compaction
+summary is flagged `isCompactSummary`. This one has no flag, and it does not look like
+machinery: it is long, it is prose, and it carries the subagent's `<result>` verbatim, so it
+reads exactly like something a person pasted in. All 15 on this machine are the entire
+content of their record and all 15 are closed — measured before matching on the closing tag,
+because the alternative (drop any record mentioning the tag) would delete a real question
+from a human quoting one. A test holds that direction: a turn with the block in the middle
+keeps everything either side of it.
+
+*It was never only `specification`.* The item was filed off three calibration rows, and the
+sweep found the same phantom in a second check. `effort` calls a turn "overkill" when an
+expensive setting is spent on ≤2 responses with ≤1 call — which is precisely the shape of the
+model acknowledging a notification. Session `fa0e1a7d` reported 5 overkill turns and now
+reports 0; `a7fd4318` went 4 to 1; the check fired in 10 sessions and now fires in 8. Nothing
+predicted that: the roadmap item named one check, and the corpus named two. **When a phantom
+turn is found, ask which checks are per-turn**, not which check reported it.
+
+*What moved, on 85 sessions.* 5 changed. `specification` fired 3 → 2, `unclarified_count`
+max 4 → 2, `requests` max 13 → 12. `effort` fired 10 → 8. The worst session was `fa0e1a7d`:
+20 turns → 9, so **11 of its 20 turns were notifications**, and its 13 "requests" were 2.
+No session lost every turn — `no_human_turn` stays at 7 — so nothing was refused that used to
+be judged. In the volunteer's file, `specification` went from 7 rows to 4 with none of them
+machine-injected, and the three freed slots went to `partial_use` rows about real commands.
+
+*The assumption is declared, and its probe says what it cannot see.* `formats.task_notification`
+probes for the tag surviving `clean()` — the drift where the block stops being closed the way
+`_STRIP` matches it. A **rename** to `<agent-notification>` leaves no residue, so the phantom
+would return in silence; that is written into `degrades` rather than left for a reader to
+assume covered. Coverage is now 5 probed of 8, still 3 unprobed, and the test that pins those
+counts is what noticed the new entry.
+
+3 tests plus the probe's two-state test, 156 total; every one watched to fail first — and the
+first attempt to watch them was itself the lab note about mutations that error rather than
+fail, having left a bare comma in the regex.
+
 ---
 
 ## How the defects have sorted, because it is what predicts the next one
@@ -1539,6 +1581,17 @@ Each cost a full re-run to discover, so they are recorded here rather than relea
   happened three times: the `Step.depth` carry-forward in item 10, and `\s` spanning a
   newline inside `_family` in item 4, which invented a command out of two lines of one
   Bash script. Where a line boundary is meaningful, say `[^\S\n]` and mean it.
+- **The corpus contains the session doing the measuring, and it grows between the two runs.**
+  R-001's before-and-after sweeps were taken twenty minutes apart, and the aggregate showed
+  `batching` moving — 49 sessions fired to 50, `responses_with_tools` median 35 to 37 — from a
+  change that only ever removes turns. The whole of it was the live session: its own transcript
+  is in `~/.claude/projects`, it gained a call between the runs, and that was enough to shift a
+  median across 85 sessions. Nothing looked wrong; a plausible side effect on an unrelated check
+  is exactly what a real bug would produce. What settled it was refusing to reason about it and
+  measuring per session through `sweep.run`'s `observe` seam instead: 5 sessions changed, the
+  only one whose `batching` moved had no change in its turn count, and it was this one. **Diff
+  per session, not per aggregate** — an aggregate cannot tell you which member moved, and one
+  moving member is the difference between a side effect and a self-portrait.
 - **A clean sweep is evidence about the past, not a proof.** Item 4's parse fix was
   measured against 234 transcripts and was right about all of them; the corpus simply
   contained no prose *about* `--help`, so item 13's phantom could not appear in it, and did

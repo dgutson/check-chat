@@ -18,22 +18,13 @@ number; read this one to pick a task. The rule the project is built on governs b
 test has been watched to fail.**
 
 Items were renumbered when this file adopted the `R-` scheme. `HISTORY.md`, docstrings and
-commit messages refer to the old bare numbers, so: R-001 is new (split out of item 9),
-R-002 was 26, R-003 was 9, R-004 was 6, R-005 was 7. Items 1–5 and 10–27 are shipped and
-retired to `HISTORY.md` under their original numbers.
+commit messages refer to the old bare numbers, so: R-002 was 26, R-003 was 9, R-004 was 6,
+R-005 was 7. Items 1–5 and 10–27 are shipped and retired to `HISTORY.md` under their
+original numbers, as is R-001, which was new.
 
 ---
 
 ## Now
-
-### R-001 — `<task-notification>` turns counted as requests the user typed
-
-- **Category:** Checks
-- **What:** Stop `specification`'s rows anchoring to machine-injected `<task-notification>` turns. The seam is `_STRIP` / `clean()` in `checkchat/transcript.py:48`, which already removes `<system-reminder>`, `<local-command-std*>` and `<command-*>` boilerplate and does not remove this one; whatever the mechanism, the row must not survive into `checkchat/specification.py`'s output.
-- **Why:** On the author's own corpus 3 of 7 `specification` rows are `<task-notification>` records, found by item 27's calibration pass. Each is true about the transcript and false about the person, and each spends one of the forty rows a volunteer is asked to mark. A row a volunteer cannot check reads as bogus, which is why `partial_use`'s proof window was fixed before anyone was asked to rule on one.
-- **Outcome:** No `specification` row is anchored to a turn the harness injected, and the calibration file a volunteer receives contains only rows about things a human typed.
-- **Blocked-by:** —
-- **Enables:** R-003
 
 ### R-002 — Ship the record census
 
@@ -52,7 +43,7 @@ retired to `HISTORY.md` under their original numbers.
 - **What:** Get `checkchat --calibrate` run by at least one person who is not the author, and merge the returned file. This waits on a person, not on code: the corpus pass (`--sweep`), the declared-safe aggregate, the public ask and the single command a volunteer runs are all shipped. Treat the first returned file as a test of the file itself — if the boxes come back mostly `?`, the rows were not judgeable cold and the fix is the row, not the volunteer.
 - **Why:** The `specification` and junior-auditor checks have only **synthetic** positive controls. Daniel's corpus is their negative control for the second time — median 1 turn to first edit, essentially zero re-asking — so it establishes no base rate and no threshold for the population these checks were built for. Until a marked file comes back, thresholds must not be tuned against the author's sessions: that corpus can only show the detectors are quiet for an expert, which is correct behaviour and evidence of nothing else. Not "when real junior transcripts exist" — that filing was item 10's mistake, and a blocker that names an artifact is a task rather than a wait.
 - **Outcome:** At least one marked calibration file from a non-author is merged, giving these checks a base rate and a threshold drawn from the population they target — or, if the rows prove unjudgeable cold, a rewritten row set and a second ask.
-- **Blocked-by:** R-001
+- **Blocked-by:** —
 - **Enables:** R-004, R-005
 
 ## Later

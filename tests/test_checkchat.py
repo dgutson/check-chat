@@ -2,7 +2,7 @@
 
 Two kinds of test here, and the second kind is the point.
 
-The first kind guards the four wire-format traps in `transcript.py`. Each one, if
+The first kind guards the seven wire-format traps in `transcript.py`. Each one, if
 mishandled, corrupts every downstream count without raising anything — a session
 looks twice as long, or a user declining a command looks like a broken tool. They are
 regression tests for bugs that do not announce themselves.
@@ -67,7 +67,7 @@ def write(tmp_path, records, name="s.jsonl"):
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 
 
-# -------------------------------------------------- the four format traps
+# -------------------------------------------------- the seven format traps
 
 def test_split_records_are_one_response(tmp_path):
     """Trap 1: one API response can be several records sharing a requestId."""
@@ -111,6 +111,57 @@ def test_interruption_marker_is_not_a_turn(tmp_path):
     ], name="interrupt.jsonl"))
     assert [t.prompt for t in sess.turns] == ["go", "no, do it the other way"], \
         "a turn nobody typed inflates every per-turn denominator"
+
+
+_NOTIFICATION = (
+    "<task-notification>\n<task-id>a4af6ad11e9c4f507</task-id>\n"
+    "<tool-use-id>toolu_01Rjj3KPTNLE7mpm2AeN5Rky</tool-use-id>\n"
+    "<output-file>/tmp/claude-1000/-p/s/tasks/a4af6ad11e9c4f507.output</output-file>\n"
+    "<status>completed</status>\n"
+    "<summary>Agent \"Research the thing\" finished</summary>\n"
+    "<result>Here is what the subagent found, at length. " + "x" * 400 + "</result>\n"
+    "</task-notification>"
+)
+
+
+def test_task_notification_is_not_a_turn(tmp_path):
+    """Trap 5 by a third door: a background agent finishing is posted as a `user` record.
+
+    Same shape as the interruption marker and the compaction summary — an ordinary
+    `user` record with no flag on it — and the same damage, a turn nobody typed. It went
+    unnoticed longer because it reads like a message: it is long, it is prose, and it
+    carries a `<result>` a person could plausibly have pasted.
+
+    Measured on this machine: 15 of them, every one the entire content of its record and
+    every one closed. Item 27's calibration file is where it surfaced — 3 of the 7
+    `specification` rows a volunteer would have been asked to rule on were findings about
+    a notification the harness had written to itself.
+    """
+    sess = transcript.load(write(tmp_path, [
+        _human("go"),
+        _asst("on it", calls=[("t1", "Task", {"description": "research"})]),
+        _result("t1", "dispatched"),
+        _human(_NOTIFICATION),
+        _asst("The subagent came back with. " * 40, req="r2"),
+    ], name="notify.jsonl"))
+    assert [t.prompt for t in sess.turns] == ["go"], \
+        "a notification the harness posted to itself is not a request the user typed"
+
+
+def test_a_human_quoting_a_notification_keeps_the_rest_of_their_turn(tmp_path):
+    """The direction this fix must not fail in.
+
+    Dropping any record that *contains* the tag is the crude version, and it would delete
+    a real question — so the state that tells the two implementations apart is a turn
+    where the quoted block is not the whole message. What gets stripped is the block;
+    what survives is the person. Same contract `<system-reminder>` has had all along.
+    """
+    sess = transcript.load(write(tmp_path, [
+        _human(f"why did this fire? {_NOTIFICATION} it should have been quiet"),
+        _asst("because the tag was left in", req="r2"),
+    ], name="quoted.jsonl"))
+    assert len(sess.turns) == 1, "the human said something either side of the quote"
+    assert sess.turns[0].prompt == "why did this fire?   it should have been quiet"
 
 
 def test_declined_call_is_not_a_failure(tmp_path):
@@ -529,6 +580,34 @@ def test_naming_a_file_does_not_make_a_question_answerable(tmp_path):
     assert a["vague_requests"] == 0, "it named a file, so concreteness is satisfied"
     assert a["fired"] is True, "and it is still caught, because the answer gave it away"
     assert a["unclarified"][0]["named_something_specific"] is True
+
+
+def test_a_notification_never_becomes_an_unclarified_row(tmp_path):
+    """R-001, stated where it is consumed rather than where it is fixed.
+
+    A notification is the perfect false positive for this check: it is never "acted on",
+    the reply to it is prose, and prose about what a subagent found contains no question
+    back — all three conditions, met by a record no human wrote. Two of them fire the
+    check, which is a session-level verdict reached without a person in it.
+
+    The row is what makes it expensive rather than merely wrong: `--calibrate` spends one
+    of a volunteer's forty slots on each, and a row a volunteer cannot check reads as
+    bogus about the tier it came from.
+
+    Built as a real request beside the notifications, which is the corpus shape — a
+    session that is *only* notifications never reaches this function, because `sweep`
+    refuses a session with no human turn (item 16) and a notification no longer counts
+    as one.
+    """
+    recs = _exchange("add the census to formats.py", "Done. " * 40,
+                     calls=[("t1", "Edit", {"file_path": "/formats.py"})])
+    recs.append(_result("t1", "ok"))
+    for i in range(3):
+        recs += _exchange(_NOTIFICATION, "The subagent reported back. " * 40, req=f"n{i}")
+    a = specification.analyse(transcript.load(write(tmp_path, recs, name="notify_spec.jsonl")))
+    assert a["unclarified_count"] == 0 and a["fired"] is False, \
+        "the three conditions are all met and nobody made a request"
+    assert a["requests"] == 1, "and only the person's turn is in the denominator"
 
 
 def test_reactions_are_not_counted_as_requests(tmp_path):
@@ -2968,6 +3047,33 @@ def test_a_missing_shape_is_told_from_a_thing_that_never_happened(tmp_path):
     assert any("preTokens" in w for w in formats.probe(stated)), formats.probe(stated)
 
 
+def test_the_notification_probe_fires_on_the_tag_it_could_not_strip(tmp_path):
+    """R-001's assumption, and the honest statement of what its probe can see.
+
+    The evidence is the tag surviving `clean()`, which happens when the block stops being
+    closed the way `_STRIP` matches it — the drift that returns trap 7 while every count
+    stays arithmetically correct. What it cannot see is a **rename**: `<agent-notification>`
+    would leave no residue to find, and the phantom would come back in silence. That
+    residual is written into `degrades` rather than left for a reader to assume covered,
+    because a probe trusted for more than it checks is the confident zero again.
+    """
+    stripped = transcript.load(write(tmp_path, [
+        _human("go"), _asst("done"),
+        _human(_NOTIFICATION),
+        _asst("the agent came back", req="r2"),
+    ], name="clean_notify.jsonl"))
+    assert [t.prompt for t in stripped.turns] == ["go"]
+    assert formats.probe(stripped) == [], "a block that matched is not a shape that went missing"
+
+    unclosed = transcript.load(write(tmp_path, [
+        _human("go"), _asst("done"),
+        _human(_NOTIFICATION.replace("</task-notification>", "</task-notification-v2>")),
+        _asst("the agent came back", req="r2"),
+    ], name="drifted_notify.jsonl"))
+    assert len(unclosed.turns) == 2, "the phantom is back, which is what makes it reportable"
+    assert any("trap 7" in w for w in formats.probe(unclosed)), formats.probe(unclosed)
+
+
 def test_a_depth_of_zero_by_absence_is_told_from_one_by_measurement(tmp_path):
     """`grounding`, the seam sizes and the report header all read `depth`. If the usage block
     ever moves, every one of them says 0 and none of them says it was never measured."""
@@ -3062,7 +3168,7 @@ def test_the_format_check_states_its_coverage_when_nothing_is_wrong(tmp_path, mo
     r = d["checks"]["formats"]
 
     assert not r["fired"] and r["contradicted"] == 0
-    assert r["probed"] == 4 and r["unprobed"] == 3 and r["assumptions"] == 7
+    assert r["probed"] == 5 and r["unprobed"] == 3 and r["assumptions"] == 8
     for a in formats.ASSUMPTIONS:
         if not a.probe:
             assert a.key in r["line"], f"{a.key} cannot be probed and the line does not say so"

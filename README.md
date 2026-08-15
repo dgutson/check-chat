@@ -298,12 +298,14 @@ No runtime dependencies — `pytest` is the only dev extra, and `dependencies` i
 `pyproject.toml` is empty on purpose: this has to run inside whatever environment the
 session under test already has.
 
-They cover the six wire-format traps that silently corrupt every count if mishandled
+They cover the seven wire-format traps that silently corrupt every count if mishandled
 (one response spanning several records; tool results wearing a `user` role; subagent
 sidechains; a user-declined call flagged as an error; an interruption marker becoming a
-turn nobody typed; and a compaction summary becoming another one, which strands a real
+turn nobody typed; a compaction summary becoming another one, which strands a real
 question with no reply and credits its answer to ~4,000 characters of the machine's own
-prose), plus a positive control for sycophancy — which the development corpus measures at
+prose; and a background agent's `<task-notification>` becoming a third, which reads as a
+request and gets reported as one), plus a positive control for sycophancy — which the
+development corpus measures at
 zero, so a detector never observed to fire would be indistinguishable from a broken one.
 
 The compaction tests run against a **real compacted transcript**, in
