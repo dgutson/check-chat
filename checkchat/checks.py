@@ -285,7 +285,24 @@ def _effort(ctx):
     a = effort.analyse(ctx.session)
     return {**a, "summary": f"{a.get('overkill_turns', 0)} trivial turns at high effort, "
                             f"{a.get('circling_turns', 0)} circling turns at low effort "
-                            f"| mix {a.get('effort_mix', {})}"}
+                            f"| mix {a.get('effort_mix', {})}",
+            # Both details were computed on every run and printed on none — the seam this
+            # project has found nine times, and R-006 found it here while fixing what the
+            # numbers *meant*. Circling rows lead because circling is the expensive half,
+            # and a turn index is the identifier a reader acts on: "which turn" is the
+            # question a count of them cannot answer.
+            "specifics": [f"turn {d['turn']} at {d['effort']} — responses {d['responses']}, "
+                          f"one file edited {d['repeat_edits']}x, "
+                          f"failed calls {d['failures']}"
+                          for d in a.get("circling_detail", [])]
+                       # Only when the overkill half fired. A run of trivial turns is the
+                       # finding; one of them is a short question, and printing its row
+                       # under a check that fired for *circling* would hand a reader a
+                       # finding nobody made.
+                       + [f"turn {d['turn']} at {d['effort']} — responses {d['responses']}, "
+                          f"calls {d['calls']}, written {d['written']} chars"
+                          for d in (a.get("overkill_detail", [])
+                                    if a.get("overkill_fired") else [])]}
 
 
 @register("batching", "opportunity", evidence="descriptive",

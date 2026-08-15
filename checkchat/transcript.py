@@ -112,7 +112,9 @@ class Step:
     index: int
     turn: int
     model: str | None = None
-    effort: str | None = None    # medium | high | xhigh | max
+    # low | medium | high | xhigh | max — and `None` on any response older than the field,
+    # which is most of them. `effort.ORDER` held four of the five until R-006.
+    effort: str | None = None
     depth: int = 0
     out_tokens: int = 0
     text: str = ""

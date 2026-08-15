@@ -354,11 +354,15 @@ Ranked by evidence quality. Lead with the first item that fired:
    the sessions that could have matched, so it is not a share of all history — do not
    report a null as "checked against N sessions" using that number.
 7. **`effort`** — the reasoning-effort setting against the work actually done.
-   `overkill_turns` is trivial turns run at `xhigh`/`max`; `circling_turns` is the
-   opposite and the more expensive one — a turn that went round in circles at low
-   effort, where thinking harder once would have cost less than flailing twenty times.
-   Suggest a setting change only when `fired` is true; a single cheap-looking turn
-   proves nothing, because a short question can legitimately need deep reasoning.
+   `overkill_turns` is trivial turns run at `xhigh`/`max`, where trivial means one
+   question, at most one tool call, and at most a snippet written — a turn that wrote a
+   hello world counts, because what makes a turn trivial is how little it produced and not
+   whether it produced nothing. `circling_turns` is the opposite and the more expensive
+   one — a turn that went round in circles at low effort, where thinking harder once
+   would have cost less than flailing twenty times. Both come with rows naming the turn;
+   report the setting to change, not just the count. Suggest a setting change only when
+   `fired` is true; a single cheap-looking turn proves nothing, because a short question
+   can legitimately need deep reasoning.
 
 8. **`wasted_effort`** — the judge's open-world answer for this dimension, and the only
    part of it that can name a pattern nobody built a check for. Items 1-7 are a closed

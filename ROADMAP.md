@@ -7,7 +7,7 @@
 > entries are no longer present in this file.
 
 Format: 1
-Next ID: R-006
+Next ID: R-007
 
 The rest of what this file used to carry now lives in `HISTORY.md`: the index of shipped
 items, the known limitations, the ideas measured to nothing, and the ways a corpus
@@ -20,7 +20,7 @@ test has been watched to fail.**
 Items were renumbered when this file adopted the `R-` scheme. `HISTORY.md`, docstrings and
 commit messages refer to the old bare numbers, so: R-003 was 9, R-004 was 6, R-005 was 7.
 Items 1–5 and 10–27 are shipped and retired to `HISTORY.md` under their original numbers,
-as are R-001 and R-002.
+as are R-001, R-002 and R-006.
 
 **Nothing here is startable by the author.** R-003 waits on a person, and the two items
 behind it wait on R-003. That is the honest state rather than an empty file: the work left

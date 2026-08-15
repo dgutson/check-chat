@@ -4,7 +4,7 @@ A Claude Code plugin that diagnoses the conversation it is running inside. Stdli
 SDK and no HTTP; the LLM is reached through Claude Code's own subagent mechanism.
 
 Tests run in the project's **own** virtualenv, from the repo root: `.venv/bin/pytest`
-(152 tests). Do not run them against the system Python.
+(165 tests). Do not run them against the system Python.
 
 ## Roadmap
 

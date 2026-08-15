@@ -47,6 +47,7 @@ the item *decided*; the entry says what it measured and what the filing got wron
 | 27 | 08-14 | `--calibrate`: one file a volunteer marks, one merge reads a stack — and a `proof` row that never named its file |
 | R-001 | 08-14 | Trap 7 — a background agent finishing is not a request the user typed; 11 phantom turns in one session, and `effort` was reading them too |
 | R-002 | 08-14 | `--census`: the record-type claims are produced by shipping code, and a rename is legible as a pair — an undeclared type beside a declaration nothing backs |
+| R-006 | 08-15 | `effort` fires in both cases it was built to name: trivial is a size and not an absence, `low` was missing from the scale — and the sweep moved by nothing, so counting the population was the finding |
 
 ---
 
@@ -1433,6 +1434,60 @@ deliberately skips, so it cannot go through `record_types` at all and would need
 reader of the raw lines. Left out on purpose; the type-level census is what makes a rename
 noticeable, which is the reason the item was filed.
 
+**R-006. `effort` was silent in both cases it was built to name** (2026-08-15).
+`overkill` disqualified any turn containing an edit, and `ORDER` held four of the harness's
+five settings. So the two sentences the module's docstring opens with — *asking how to write
+a `for` loop in bash does not need maximum reasoning*, and *here the low setting is what cost
+money* — were each unreachable in the code beneath them. Reported by the user, in the
+shortest reproduction there is: **hello world at max effort, and the tool says nothing.**
+5 tests, 165 total; 7 mutations watched to fail.
+
+*Trivial is a size, not an absence.* `edits == 0` read any artifact as proof that work had
+been done, which a three-line `hello.py` defeats. The replacement bounds what the turn
+*produced*: `written <= TRIVIAL_WRITTEN`, summed over the keys the edit tools disagree about
+naming — `content`, `new_string`, `new_source`, and `MultiEdit`'s `edits[]`, which is the one
+shape the ≤1-call bound would otherwise wave through as a single trivial action. 400
+characters, about ten lines. Chosen from what the word has to mean and *then* measured
+against the corpus rather than fitted to it (R-003's constraint), where it lands at the 34th
+percentile of 1,856 real edit calls — median 660, p90 4,284, max 42,635 — so it is neither
+below the floor of real writes nor loose enough to call a module a snippet.
+
+*The sweep moved by nothing, and that was the finding.* 8/88 = 9% before, 8/88 = 9% after,
+not one field changed. The filing had promised a before-and-after rate as the proof that a
+looser rule had not become a ranking, and an unmoved aggregate proves nothing on its own: it
+reads exactly like a change that never took effect. What settled it was counting the
+population the change newly admits — of 356 turns on this machine, 86 have the trivial shape
+and 175 contain an edit, and **the intersection is 2**, both of which wrote more than 400
+characters and are still correctly excluded. This corpus contains no hello-world turn at all:
+when its author asks for a file he asks inside a turn with many calls, and when he asks a
+question no file is written. So the widened path adds zero false positives on 356 real turns
+and is guarded synthetically, which is the honest state of it rather than a gap to be closed
+by loosening the threshold until the corpus lights up.
+
+*The `low` half cannot fire here either, and for a sharper reason.* The machine holds 10,256
+recorded effort values — 6,332 `max`, 2,285 `xhigh`, 1,261 `high`, 378 `medium` — and **no
+`low` at all**. The population that would contain the signal is sessions run at the cheapest
+setting, which is nobody's session here, so its guard is a fixture plus a `high` control that
+proves the fixture can fire; without the control, a green `low` assertion could equally mean
+the fixture had stopped circling. The default for an unrecorded setting stays *above* `high`
+(`UNKNOWN = 99`) and has a test of its own, because most transcripts here predate the `effort`
+key and reading that silence as `low` would convert every circling turn in the archive into a
+finding about a setting nobody chose.
+
+*A kind 3 was sitting inside the check being repaired.* `circling_detail` was computed on
+every run and printed by nothing — the ninth instance of the renderer seam, found while
+fixing what the numbers meant. Both details now reach `--text` through `specifics`, uncapped
+at the producer so that `evidence_rows`' "+N more, all of them in the JSON" stays true, and
+gated per half: a session whose single trivial turn sits below `OVERKILL_MIN` fires for
+*circling*, and printing the overkill row beside it would hand a reader a finding nobody made.
+
+*What the filing got wrong.* It called this two defects; it was three. It promised the sweep
+as the evidence, and the sweep was silent. And it described the `low` fix as one token — true
+of the edit, false of the work, since a one-token fix to a branch no corpus can exercise still
+needs a control before its green means anything. The mutation run then reproduced item 22's
+recorded false **OK** exactly — `"specifics": [] or [...]` changes the file and changes
+nothing — inside the project whose own register already names it.
+
 ---
 
 ## How the defects have sorted, because it is what predicts the next one
@@ -1441,9 +1496,10 @@ Four kinds, and this list once enumerated only the first. The reasoning is this 
 items 19 and 21 changed what this project looks for"; this is the summary that section says
 it is.
 
-1. **A wrong number** — 4, 12, 15. The only kind the checks themselves can catch.
+1. **A wrong number** — 4, 12, 15, R-006. The only kind the checks themselves can catch.
 2. **Every check right and the *excerpt* empty** — 16.
-3. **Everything right and the *presentation* wrong** — 16, 17, 18, and four from item 19's walks.
+3. **Everything right and the *presentation* wrong** — 16, 17, 18, four from item 19's walks,
+   and R-006's rows, which is the kind arriving *inside* a kind 1 nobody had noticed either.
 4. **Everything right and printed, the *consumer* never given it** — 21, 22, `capabilities`.
 
 Kinds 2–4 are one defect at increasing distance — excerpt, renderer, consumer — so the
@@ -1456,6 +1512,12 @@ in `SKILL.md` that a new check silently made incomplete. Which is why "nothing f
 never been a claim about the code; the entries above list the commits in which it was false as
 it was being written.
 
+R-006 adds a way in that costs nothing and had not been tried: **ask the tool for the case a
+person would name first.** Not a walk, not a sweep, not a hand pass over a hop — one sentence,
+*hello world at max effort*, which every mechanism above was blind to because the corpus this
+project measures itself against does not contain one. The checks catch wrong numbers about
+sessions that happened; this catches a wrong number about the session anyone would describe.
+
 ---
 
 ## Known limitations — accepted and documented, not bugs to fix
@@ -1463,6 +1525,11 @@ it was being written.
 - **Blinding is enforced by instruction, not by the sandbox.** `tools: []` was the intent;
   the harness grants *all* tools for an empty list. The judge is `tools: ["Read"]` and is
   told to read only what it is given. Re-test if the harness ever supports an empty grant.
+- **`effort` counts characters written by an edit tool, and a heredoc is not one.** A file
+  created by `cat > x <<EOF` arrives as a `Bash` call and counts as nothing written, so such a
+  turn stays trivial-shaped whatever it produced. Accepted: reaching it means parsing shell,
+  which is the mistake two other checks were repaired for making (see the Bash-command bullet
+  below), and `detect._HEREDOC` exists for a different question. R-006.
 - **The renderer seam has leaked eight times, and now has a mechanism.** Every one was
   computed correctly and lost on the way out; the enumeration is in the entries above, and the
   count in this bullet has twice been wrong by understating it. **The rule is: nothing a
@@ -1633,6 +1700,12 @@ Each cost a full re-run to discover, so they are recorded here rather than relea
   only one whose `batching` moved had no change in its turn count, and it was this one. **Diff
   per session, not per aggregate** — an aggregate cannot tell you which member moved, and one
   moving member is the difference between a side effect and a self-portrait.
+- **An unmoved aggregate is not evidence that a change is inert.** R-006 widened `effort`'s
+  overkill rule and the sweep reported 8/88 = 9% before and 8/88 = 9% after, with no field
+  moving — which is the same shape as a change that never took effect, or a measurement taken
+  against the unedited code. What settles it is counting the population the change newly
+  *admits*: 2 turns of 356 qualified, both correctly rejected on size. **When a before/after
+  shows nothing, count what the change was supposed to reach**, and report that number instead.
 - **A clean sweep is evidence about the past, not a proof.** Item 4's parse fix was
   measured against 234 transcripts and was right about all of them; the corpus simply
   contained no prose *about* `--help`, so item 13's phantom could not appear in it, and did

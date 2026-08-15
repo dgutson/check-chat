@@ -104,7 +104,7 @@ detector that cannot be shown to fire on real data does not ship.**
 | **Batching ratio** | Tool calls per response. Not waste itself; the multiplier that turns every other finding into round trips. |
 | **Sycophancy** | Short user challenge → position reversal, agreement opener, or a claim quietly hedged into a non-claim. Located deterministically, judged by the model. |
 | **Grounding decay** | Checking reality less as context fills. Reported only against the session's own first quartile, and flagged as weak — because it is. |
-| **Effort calibration** | `xhigh`/`max` spent on one-question turns — or the reverse, a turn circling for 50 responses at low effort, where thinking harder once beats flailing twenty times. |
+| **Effort calibration** | `xhigh`/`max` spent on one-question turns — writing `hello.py` is one, since what makes a turn trivial is how little it produced and not whether it produced nothing — or the reverse, a turn circling for 50 responses at low effort, where thinking harder once beats flailing twenty times. |
 
 Deliberately **not** built, each measured to nothing: repeated-error clustering
 (1 true instance in 1,968 results), semantic drift and terminology mutation (a

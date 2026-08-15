@@ -35,12 +35,15 @@ from checkchat import __main__ as cli  # noqa: E402
 
 # ------------------------------------------------------------------ fixtures
 
-def _asst(text="", calls=(), req="r1", usage=None):
+def _asst(text="", calls=(), req="r1", usage=None, effort=None):
+    """`effort` is a *record* key, not a message one, which is where the harness puts it —
+    a fixture that nests it under `message` would exercise a format nothing writes."""
     content = [{"type": "text", "text": text}] if text else []
     for cid, name, inp in calls:
         content.append({"type": "tool_use", "id": cid, "name": name, "input": inp})
     return {
         "type": "assistant", "requestId": req, "timestamp": "2026-08-08T00:00:00Z",
+        **({"effort": effort} if effort else {}),
         "message": {"role": "assistant", "model": "claude-opus-5", "content": content,
                     "usage": usage or {"input_tokens": 1000, "output_tokens": 50}},
     }
@@ -642,6 +645,119 @@ def test_effort_overkill_and_circling(tmp_path):
         s.effort = "high"
     a = effort.analyse(circ)
     assert a["circling_turns"] == 1, "12 responses editing one file 12x is flailing, not thinking"
+
+
+def _hello_world(i: int, eff: str = "max") -> list[dict]:
+    """The turn a person names first when asked what an over-thought session looks like."""
+    return [_human(f"write me a hello world #{i}"),
+            _asst("", calls=[(f"w{i}", "Write", {"file_path": f"/h{i}.py",
+                                                 "content": "print('Hello, world!')\n"})],
+                  req=f"a{i}", effort=eff),
+            _result(f"w{i}", "ok"),
+            _asst("Done.", req=f"b{i}", effort=eff)]
+
+
+def test_a_tiny_file_written_at_max_is_still_a_trivial_turn(tmp_path):
+    """R-006's first half, and the case that made the check look broken from outside.
+
+    The original clause disqualified any turn containing an edit, so writing `hello.py`
+    bought immunity from a check about spending too much thought on too little work — the
+    counterexample being one sentence long is why it went unnoticed. Broken on purpose by
+    restoring `edits == 0`: these three turns then score `overkill_turns` 0 and the check
+    goes silent, which is precisely the report the user could not get."""
+    recs = [r for i in range(3) for r in _hello_world(i)]
+    a = effort.analyse(transcript.load(write(tmp_path, recs, name="hello.jsonl")))
+
+    assert a["overkill_turns"] == 3 and a["fired"], \
+        "three one-call turns at max, each producing one line, is the setting and not the work"
+    assert [d["written"] for d in a["overkill_detail"]] == [23, 23, 23], \
+        "and the row carries how little was written, since that is the entire argument"
+
+
+def test_writing_a_module_in_one_shot_is_not_a_trivial_turn(tmp_path):
+    """The other side of the same clause, and why it became a size bound instead of a
+    deletion. Eight kilobytes of code produced in one call is work: the turn is short
+    because the model got it right first time, which is the opposite of effort wasted.
+    Broken on purpose by dropping the `written` bound — this then reports three."""
+    body = "def parse(line):\n    return line.split(',')\n" * 200
+    recs = []
+    for i in range(3):
+        recs += [_human(f"write the parser #{i}"),
+                 _asst("", calls=[(f"w{i}", "Write", {"file_path": f"/p{i}.py",
+                                                      "content": body})],
+                       req=f"a{i}", effort="max"),
+                 _result(f"w{i}", "ok"),
+                 _asst("Done.", req=f"b{i}", effort="max")]
+    a = effort.analyse(transcript.load(write(tmp_path, recs, name="module.jsonl")))
+
+    assert a["overkill_turns"] == 0 and not a["fired"], \
+        f"{len(body)} characters in one call is a short turn, not a trivial one"
+
+
+def test_circling_at_low_effort_is_the_setting_the_docstring_names(tmp_path):
+    """R-006's second half. `ORDER` held four of the harness's five settings, so `low` fell
+    to the unknown default — which sits *above* `high` — and the branch written for "thinking
+    harder once beats flailing twenty times" skipped the one setting where that is true.
+
+    The `high` run is the control: it is the path that already worked, and without it a
+    green `low` assertion could equally mean the fixture stopped circling."""
+    recs = [_human("fix the parser")]
+    for i in range(12):
+        recs += [_asst("", calls=[(f"e{i}", "Edit", {"file_path": "/p.py",
+                                                     "new_string": "x = 1"})], req=f"e{i}"),
+                 _result(f"e{i}", "ok")]
+
+    for setting in ("low", "medium", "high"):
+        sess = transcript.load(write(tmp_path, recs, name=f"circ-{setting}.jsonl"))
+        for s in sess.steps:
+            s.effort = setting
+        a = effort.analyse(sess)
+        assert a["circling_turns"] == 1 and a["fired"], \
+            f"12 responses re-editing one file at {setting} is flailing at a cheap setting"
+        assert a["circling_detail"][0]["effort"] == setting, "the row names the setting to change"
+
+
+def test_an_unrecorded_effort_setting_is_not_read_as_a_low_one(tmp_path):
+    """The guard on the other direction, and the reason `UNKNOWN` is a large number rather
+    than zero. Most transcripts on this machine predate the `effort` key entirely; scoring
+    that silence as `low` would turn every circling turn in the archive into a finding about
+    a setting nobody chose. Broken on purpose by setting `UNKNOWN = 0` — this then fires."""
+    recs = [_human("fix the parser")]
+    for i in range(12):
+        recs += [_asst("", calls=[(f"e{i}", "Edit", {"file_path": "/p.py",
+                                                     "new_string": "x = 1"})], req=f"e{i}"),
+                 _result(f"e{i}", "ok")]
+    sess = transcript.load(write(tmp_path, recs, name="circ-unknown.jsonl"))
+
+    assert all(s.effort is None for s in sess.steps), "the fixture's point is the absent key"
+    a = effort.analyse(sess)
+    assert a["circling_turns"] == 0 and not a["fired"], \
+        "an unrecorded setting is unknown, and a finding about it would name no remedy"
+
+
+def test_the_effort_rows_reach_the_renderer_for_the_half_that_fired(tmp_path, monkeypatch):
+    """`circling_detail` was computed on every run and printed by nothing — the seam this
+    project has now found nine times, sitting inside the check R-006 came to fix.
+
+    The second half is the reason the rows are gated per half: this session's single trivial
+    turn is below `OVERKILL_MIN`, so the check fires for **circling**, and printing the
+    overkill row beside it would hand a reader a finding nobody made."""
+    recs = [_human("what does this project call its checks?"),
+            _asst("Checks.", req="t0", effort="max"), _human("fix the parser")]
+    for i in range(12):
+        recs += [_asst("", calls=[(f"e{i}", "Edit", {"file_path": "/p.py",
+                                                     "new_string": "x = 1"})],
+                       req=f"e{i}", effort="high"),
+                 _result(f"e{i}", "ok")]
+    d = _collected(tmp_path, monkeypatch, records=recs, name="effort-render.jsonl")
+    r, text = d["checks"]["effort"], cli._text(d)
+
+    assert r["fired"] and r["overkill_turns"] == 1 and not r["overkill_fired"], \
+        "the fixture is the point: one trivial turn is not a finding, one circling turn is"
+    assert r["specifics"] == ["turn 1 at high — responses 12, one file edited 12x, "
+                              "failed calls 0"], "the row a reader acts on, and only that row"
+    assert f"    - {r['specifics'][0]}" in text, "computed and printed, not computed only"
+    assert "written" not in text, "no row for the half that did not fire"
 
 
 # ------------------------------------------------------- judge reply validation
