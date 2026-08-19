@@ -120,6 +120,29 @@ def _project(path: str) -> str:
     return name if len(name) <= PROJECT_WIDTH else "…" + name[-(PROJECT_WIDTH - 1):]
 
 
+def _tool_version() -> str | None:
+    """Which build produced this file, read from the manifest that sits beside the package.
+
+    From the filesystem rather than a literal here, for the reason a literal fails: a second
+    copy of `plugin.json`'s version goes stale exactly at the moment it matters, a release.
+    `None` when the package is installed without the plugin manifest around it — a fact the
+    merge prints rather than a default it invents, since "built by an unknown checkchat" and
+    "built by 0.2.0" are different things to know about somebody else's file.
+
+    R-010 generalises this to every report and to `--emit`, and will own it; the version lives
+    here until then because this is the one output that cannot wait for it. A calibration file
+    outlives the machine that made it and comes back weeks later from a volunteer whose
+    install nobody can inspect.
+    """
+    manifest = Path(__file__).resolve().parent.parent / ".claude-plugin" / "plugin.json"
+    try:
+        data = json.loads(manifest.read_text())
+    except (OSError, ValueError):
+        return None
+    version = data.get("version") if isinstance(data, dict) else None
+    return str(version) if version else None
+
+
 def _select(by_check: dict[str, list], cap: int) -> list[dict]:
     """Round-robin, so the loudest check cannot spend the whole of somebody's attention.
 
@@ -184,6 +207,7 @@ def build(limit: int = 0, siblings: int = 12, cap: int = CALIBRATE_ROWS) -> dict
 
     return {
         "generated": time.strftime("%Y-%m-%d"),
+        "version": _tool_version(),
         "cap": cap,
         "sessions": aggregate["sessions"],
         "minutes": max(1, round(len(rows) * SECONDS_PER_ROW / 60)),
@@ -207,8 +231,15 @@ def _data_block(d: dict) -> str:
     Only the aggregate and the counts. The verdicts are read from the marked lines above and
     from nowhere else, because two places to learn the same fact is two answers when a file
     comes back edited — and the marked lines are the ones the volunteer can see.
+
+    `version` is additive and `SCHEMA` deliberately does not move for it: `parse` reads every
+    key with `.get`, so an old build reading this block ignores the field and a new build
+    reading an old block sees `None`, which is the fact it should see. Bumping the schema
+    would turn every file already in flight into a mismatch warning about a key that changed
+    nothing for the reader.
     """
     return json.dumps({"schema": SCHEMA, "generated": d["generated"], "cap": d["cap"],
+                       "version": d["version"],
                        "sessions": d["sessions"], "rows_shown": len(d["rows"]),
                        "counts": d["counts"], "aggregate": d["aggregate"]}, default=str)
 
@@ -228,7 +259,8 @@ def render(d: dict) -> str:
         f"checkchat calibration — {len(rows)} findings, {d['minutes']} min. Send this file "
         f"back as it is, or mark it first.",
         "",
-        f"FROM {d['sessions']} session transcripts on this machine, read on {d['generated']}. "
+        f"FROM {d['sessions']} session transcripts on this machine, read on {d['generated']} "
+        f"by checkchat {d['version'] or '(version unknown)'}. "
         f"NOT anonymous — each row carries:",
         *disclosure,
         "  - the date, the project directory name and the session id of each one",
@@ -324,10 +356,12 @@ def parse(text: str, name: str = "") -> dict:
                         f"unclear, not as a verdict")
 
     aggregate = None
+    version = None
     if DATA_MARK in text:
         try:
             block = json.loads(text.split(DATA_MARK, 1)[1].strip().splitlines()[0])
             aggregate = block.get("aggregate")
+            version = block.get("version")
             if block.get("schema") != SCHEMA:
                 warnings.append(f"{name or 'file'}: data block says schema "
                                 f"{block.get('schema')!r}, this build writes {SCHEMA!r}")
@@ -339,7 +373,7 @@ def parse(text: str, name: str = "") -> dict:
                         f"verdicts but no base rate")
 
     return {"name": name, "read_all": read_all, "rows": rows,
-            "aggregate": aggregate, "warnings": warnings}
+            "aggregate": aggregate, "version": version, "warnings": warnings}
 
 
 def merge(files: list[dict]) -> dict:
@@ -372,7 +406,7 @@ def merge(files: list[dict]) -> dict:
             bucket(r["check"])[mark] += 1
         agg = f.get("aggregate") or {}
         per_file.append({"name": f["name"], "rows": len(f["rows"]),
-                         "read_all": f["read_all"],
+                         "read_all": f["read_all"], "version": f.get("version"),
                          "sessions": agg.get("sessions"), **tally})
         # Kept per file rather than per check, so a check that first appears in the third
         # file still lines its shares up with the corpora they came from. A file with no
@@ -401,9 +435,22 @@ def merge(files: list[dict]) -> dict:
         c["judged"] = judged
         c["fp_rate"] = round(c["bogus"] / judged, 3) if judged else None
 
+    # One rate over files from different builds is one number over two populations. Trap 8 is
+    # the case that proves it rather than the case that worries about it: recovering the brief
+    # typed after a slash command changed *which turns exist*, so a check's rows before and
+    # after it are counts of different things and pool into a figure describing neither. Said
+    # as a warning and not as a refusal — a stack that spans builds is still the best evidence
+    # anyone has, and a merge that dies on it is the hand-merging this module exists to end.
+    builds = sorted({str(f["version"] or "unknown") for f in per_file})
+    if len(builds) > 1:
+        warnings.append(f"the stack spans {len(builds)} builds ({', '.join(builds)}) — a rate "
+                        f"pooled across them assumes every build counted the same turns, and "
+                        f"trap 8 is a build where that is false")
+
     return {"files": per_file, "checks": dict(sorted(per_check.items())),
             "corpora": len(per_file),
             "rows": sum(f["rows"] for f in per_file),
+            "builds": builds,
             "skipped": dict(sorted(skipped.items())),
             "warnings": warnings}
 
@@ -412,14 +459,16 @@ def render_merge(m: dict) -> str:
     """What the merge computed, all of it — including the sentence that says what the number
     is not. A precision figure with no protocol beside it is the kind of clean number this
     project has been fooled by three times."""
-    out = [f"checkchat calibration merge — {m['corpora']} files, {m['rows']} rows", "",
-           f"{'file':<28} {'rows':>5} {'read_all':>9} {'sessions':>9} {'ok':>4} "
+    out = [f"checkchat calibration merge — {m['corpora']} files, {m['rows']} rows, "
+           f"built by {', '.join(m['builds']) or '—'}", "",
+           f"{'file':<28} {'built':>7} {'rows':>5} {'read_all':>9} {'sessions':>9} {'ok':>4} "
            f"{'bogus':>6} {'unsure':>7} {'unclear':>8} {'unjudged':>9}"]
     for f in m["files"]:
         # The basename, not the tail of the path: `--calibrate-merge received/*.txt` gives
         # every file the same last 28 characters otherwise, and a table whose rows cannot be
         # told apart is a table that cannot be acted on.
-        out.append(f"{Path(f['name'] or '?').name[:28]:<28} {f['rows']:>5} "
+        out.append(f"{Path(f['name'] or '?').name[:28]:<28} "
+                   f"{str(f['version'] or 'unknown'):>7} {f['rows']:>5} "
                    f"{'yes' if f['read_all'] else 'NO':>9} "
                    f"{(f['sessions'] if f['sessions'] is not None else '?'):>9} "
                    f"{f['ok']:>4} {f['bogus']:>6} {f['unsure']:>7} {f['unclear']:>8} "

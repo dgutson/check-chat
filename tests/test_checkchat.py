@@ -3735,7 +3735,18 @@ def test_everything_the_calibration_file_computes_reaches_the_person_marking_it(
     # full of small integers supplies a matching digit for free, and `str(value) in text` is
     # item 20's containment bug arriving in the test written to prevent item 19's.
     assert d["truncated_rows"], "no row was cut, so the disclosure of the cut is untested"
+    # The list below is hand-maintained, which made it the seam it was written to close: the
+    # `version` field was added to `build`, rendered, and this test stayed green because
+    # nothing asked whether every field appears here. So the keys are pinned as a set first.
+    # `rows`, `counts`, `discloses` and `aggregate` are covered by the loops further down;
+    # `skipped` by `test_a_check_whose_specifics_are_pointers_is_not_asked_about`.
+    assert set(d) == {"generated", "version", "cap", "sessions", "minutes", "truncated_rows",
+                      "rows", "counts", "discloses", "skipped", "aggregate"}, (
+        "`build` grew or lost a field. Every value it computes has to reach the person "
+        "marking the file, so name it below beside the words it prints next to — this "
+        "assertion is here because adding a field and forgetting to is invisible otherwise")
     for key, pattern in (("generated", r"read on {v}"),
+                         ("version", r"by checkchat {v}"),
                          ("cap", r"cap {v} rows"),
                          ("sessions", r"FROM {v} session transcripts"),
                          ("minutes", r"{v} min\."),
@@ -3758,6 +3769,50 @@ def test_everything_the_calibration_file_computes_reaches_the_person_marking_it(
             f"no single line carries this row and what places it: {row}"
     assert sweep.render(d["aggregate"]).splitlines()[0] in text, \
         "the base-rate half of the file is computed and not written into it"
+
+
+def test_a_calibration_file_carries_the_build_that_made_it_all_the_way_to_the_merge(
+        tmp_path, monkeypatch):
+    """The field is worth nothing at the point it is computed; it is worth something four hops
+    later, when a stack of files from other people's installs is being pooled into one rate.
+
+    So the chain is asserted end to end — manifest, `build`, the data block, `parse`, `merge` —
+    because every hop between them has leaked at least once in this project. The version is
+    read from `plugin.json` rather than compared to a literal, which is the point: a release
+    that bumps the manifest and not the file would pass a test written the other way.
+    """
+    manifest = json.loads((DOCS / ".claude-plugin" / "plugin.json").read_text())["version"]
+    _calibration_corpus(tmp_path, monkeypatch)
+    d = calibrate.build()
+    assert d["version"] == manifest, "the file claims a build the manifest does not"
+
+    text = calibrate.render(d)
+    head, block = text.split(calibrate.DATA_MARK, 1)
+    assert json.loads(block.strip().splitlines()[0])["version"] == manifest, \
+        "the data block is what the merge reads, and it does not say which build wrote it"
+    assert calibrate.parse(text, "current.txt")["version"] == manifest
+
+    # An older build's file and a file from before the field existed. Both are things Daniel
+    # will actually be handed, and `unknown` is a bucket rather than a default: "built by a
+    # checkchat nobody can name" and "built by 0.1.0" are different facts about somebody's row.
+    older = json.loads(block.strip().splitlines()[0])
+    older["version"] = "0.1.0"
+    prehistoric = dict(older)
+    prehistoric.pop("version")
+    stack = [calibrate.parse(text, "current.txt"),
+             calibrate.parse(f"{head}{calibrate.DATA_MARK}\n{json.dumps(older)}", "old.txt"),
+             calibrate.parse(f"{head}{calibrate.DATA_MARK}\n{json.dumps(prehistoric)}",
+                             "ancient.txt")]
+    assert [f["version"] for f in stack] == [manifest, "0.1.0", None]
+
+    m = calibrate.merge(stack)
+    assert m["builds"] == sorted({manifest, "0.1.0", "unknown"})
+    assert any("spans 3 builds" in w for w in m["warnings"]), (
+        "three builds pooled into one rate and the merge does not say so, which is the "
+        "clean-looking number this project keeps being fooled by")
+    out = calibrate.render_merge(m)
+    for build in m["builds"]:
+        assert build in out, f"{build} is in the merge and reaches nobody reading it"
 
 
 def test_the_file_says_what_each_row_carries_before_the_rows(tmp_path, monkeypatch):
