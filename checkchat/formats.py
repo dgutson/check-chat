@@ -57,8 +57,11 @@ IGNORED = {
     "queue-operation": "a prompt typed while the previous one was still being answered. "
                        "Measured on this corpus: of 62 enqueued inside answered sessions, 37 "
                        "arrive again as a `user` record when they are sent, 22 are machine "
-                       "`<task-notification>` tags, 2 are slash commands `clean()` strips "
-                       "anyway, and 1 was never sent. Counting these would double a turn",
+                       "`<task-notification>` tags, 2 are slash commands and 1 was never "
+                       "sent. Counting these would double a turn — and the two slash "
+                       "commands strengthened that after trap 8: they used to be stripped "
+                       "either way, and a queued `/skill brief` now becomes a turn when it "
+                       "arrives, so this record is the second copy rather than the only one",
     "mode": "which mode the session is in — UI state, not conversation",
     "permission-mode": "the permission mode in force — UI state, not conversation",
     "ai-title": "the generated session title",
@@ -68,8 +71,9 @@ IGNORED = {
     "system/turn_duration": "wall-clock timing for a turn",
     "system/away_summary": "the harness's own summary of the session for a user who stepped "
                            "away — machine prose *about* the conversation, not in it",
-    "system/local_command": "a `/slash` invocation, in the `<command-*>` form `clean()` "
-                            "already strips out of a user record",
+    "system/local_command": "a `/slash` invocation, duplicating the `<command-*>` block of a "
+                            "user record — which is where it is read, since trap 8: the "
+                            "boilerplate tags are stripped and `<command-args>` is unwrapped",
     "system/informational": "harness notices, including a hook's message when it blocked a "
                             "prompt",
 }

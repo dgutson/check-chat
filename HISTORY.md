@@ -1501,6 +1501,15 @@ it is.
 3. **Everything right and the *presentation* wrong** — 16, 17, 18, four from item 19's walks,
    and R-006's rows, which is the kind arriving *inside* a kind 1 nobody had noticed either.
 4. **Everything right and printed, the *consumer* never given it** — 21, 22, `capabilities`.
+5. **The *input* never arrived** — trap 8. Hop zero, upstream of all four: the human's brief
+   was deleted during parsing, so there was no number to be wrong, no excerpt to be empty and
+   nothing to render. 44 of 684 sessions refused outright and 3 graded against a brief with
+   the ask cut out. What makes it worth its own kind is the **cause**: traps 1–7 are all a
+   turn nobody typed, seven repetitions taught the reflex *strip harder*, and stripping harder
+   is precisely what produced a turn somebody typed and nothing counted. So the question this
+   kind adds is **"what did the last fix's own direction make me blind to?"** — and it is
+   asked by running the parser over the corpus and looking at what it found *nothing* in,
+   which is how these 44 surfaced, one session at a time, from a report that saw only one.
 
 Kinds 2–4 are one defect at increasing distance — excerpt, renderer, consumer — so the
 question is **"how far does a number travel before someone acts on it, and what checks each

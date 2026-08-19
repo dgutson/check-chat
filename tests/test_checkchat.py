@@ -70,7 +70,7 @@ def write(tmp_path, records, name="s.jsonl"):
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 
 
-# -------------------------------------------------- the seven format traps
+# -------------------------------------------------- the eight format traps
 
 def test_split_records_are_one_response(tmp_path):
     """Trap 1: one API response can be several records sharing a requestId."""
@@ -165,6 +165,67 @@ def test_a_human_quoting_a_notification_keeps_the_rest_of_their_turn(tmp_path):
     ], name="quoted.jsonl"))
     assert len(sess.turns) == 1, "the human said something either side of the quote"
     assert sess.turns[0].prompt == "why did this fire?   it should have been quiet"
+
+
+def _slash(name, args=""):
+    """A slash-command record in the shape the harness writes, tags and all.
+
+    Order varies between harness versions — `/model` writes the name first, a plugin skill
+    writes the message first — so the block is matched by tag rather than by position and
+    this fixture uses the message-first form that carries a brief.
+    """
+    return _human(f"<command-message>{name.lstrip('/')}</command-message>\n"
+                  f"<command-name>{name}</command-name>\n"
+                  f"<command-args>{args}</command-args>")
+
+
+def test_a_brief_typed_after_a_slash_command_is_the_turn(tmp_path):
+    """Trap 8: the human's words arrive *inside* harness boilerplate, not beside it.
+
+    `_STRIP` matched the whole `<command-*>` family with one alternation, and `command-args`
+    is the member of that family a person types. Stripped with its siblings, the brief left
+    no residue and `clean()` returned `""` — so `load` recorded no turn (trap 5 inverted: not
+    a turn nobody typed, a turn somebody did that nothing counted).
+
+    Measured on 684 transcripts before the fix: **44** sessions held responses and no turn at
+    all, which `__main__` refuses outright, and 3 more loaded fine while silently missing a
+    turn each — the worse half, because a judge then grades goal adherence against a brief
+    with the requirements cut out of it. One transcript lost both its opening brief and a
+    291-character requirements list typed at `/roadmap:create` mid-session. 32 turns come
+    back, and no session loses one.
+    """
+    sess = transcript.load(write(tmp_path, [
+        _slash("/agent-app:create", "I want an agent application that reads the last syslog "
+                                    "messages and shows me a diagnostic if something is wrong."),
+        _asst("Designing it now.", req="r2"),
+    ], name="slash_brief.jsonl"))
+    assert [t.prompt for t in sess.turns] == [
+        "I want an agent application that reads the last syslog messages and shows me a "
+        "diagnostic if something is wrong."
+    ], "the args are what the person typed; the message and name tags are the harness talking"
+
+
+def test_a_bare_slash_command_is_still_not_a_turn(tmp_path):
+    """The direction this fix must not fail in, and the residual it leaves on purpose.
+
+    Unwrapping `command-args` must not promote the *rest* of the family, because 82 of the
+    195 slash-command records on this machine are `/effort`, `/model`, `/plugin` and
+    `/reload-plugins` — harness controls that ask nothing, and a turn with no ask is a defect
+    in every per-turn check at once (see traps 5–7). Empty args therefore stay empty.
+
+    The cost is stated rather than assumed: a session driven *only* by bare `/skill`
+    invocations still records no turn and is still refused, which is 19 of the 44 above and
+    is exactly what the real `syslog-doctor:diagnose` session looks like. Whether a bare
+    invocation is itself an ask is **R-009**, not something this test settles quietly.
+    """
+    sess = transcript.load(write(tmp_path, [
+        _human("go"), _asst("done"),
+        _slash("/model"),
+        _slash("/effort"),
+        _asst("still here", req="r2"),
+    ], name="bare_slash.jsonl"))
+    assert [t.prompt for t in sess.turns] == ["go"], \
+        "a harness control the person typed at the prompt is not a brief it can be graded on"
 
 
 def test_declined_call_is_not_a_failure(tmp_path):

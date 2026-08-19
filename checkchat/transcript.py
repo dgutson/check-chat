@@ -2,7 +2,7 @@
 
 Self-contained on purpose — check-chat is meant to be installable on its own.
 
-Seven things about the wire format are easy to get wrong, and each of them silently
+Eight things about the wire format are easy to get wrong, and each of them silently
 corrupts every count downstream:
 
 1. One API response is written as SEVERAL records, one per content block, sharing a
@@ -52,6 +52,28 @@ corrupts every count downstream:
    spent on nothing. One session reported 5 such turns and has none. **A phantom turn is a
    defect in every per-turn check at once**, which is the lesson traps 5 and 6 each taught
    in one dimension only.
+
+8. A **slash command carries the human's words inside the boilerplate**, not beside it.
+   The `<command-*>` family looks uniformly like harness chrome — `command-message` and
+   `command-name` are — but `<command-args>` is the brief typed after `/skill`, and one
+   alternation for the family deleted it. This is trap 5 **inverted**, and that is why it
+   outlived all seven: every trap above is a turn nobody typed, so the reflex is to strip
+   harder, and stripping harder is what caused this one. A turn somebody *did* type went
+   uncounted, and `clean()` returning `""` means `load` records no turn at all.
+
+   Measured on 684 transcripts: **44 sessions held responses and not one turn**, which
+   `__main__` refuses outright, and 3 more loaded while silently dropping a turn each —
+   the worse half, because the refusal is legible and a judge grading goal adherence
+   against a brief with the requirements cut out of it is not. One transcript lost both
+   its opening brief and a 291-character requirements list typed at `/roadmap:create`
+   mid-session. Unwrapping the tags recovers 32 turns and costs none.
+
+   Empty args stay empty, so `/model` and `/effort` do not become turns with no ask —
+   82 of the 195 slash records on this machine are that kind, and promoting them would
+   be trap 5 again by the door this fix opens. The residual is deliberate: a session
+   driven only by bare `/skill` invocations still records no turn, which is 19 of the 44,
+   and whether a bare invocation is itself an ask is **R-009** rather than a thing
+   settled quietly here.
 """
 
 from __future__ import annotations
@@ -65,7 +87,14 @@ from pathlib import Path
 _STRIP = re.compile(
     r"<system-reminder>.*?</system-reminder>"
     r"|<local-command-std(?:out|err)>.*?</local-command-std(?:out|err)>"
-    r"|<(command-\w+)>.*?</\1>"
+    # Trap 8. The `<command-*>` family is harness boilerplate with one exception, and the
+    # exception is the member a person types: `<command-args>` holds the brief typed after
+    # `/skill`. One alternation for the whole family deleted it, `clean()` returned `""`,
+    # and a brief nobody could see was a session nobody could grade. So the siblings are
+    # stripped with their contents and this one is unwrapped — tags out, words in. Empty
+    # args stay empty, which keeps `/model` and `/effort` from becoming turns with no ask.
+    r"|<(command-(?!args\b)\w+)>.*?</\1>"
+    r"|</?command-args>"
     # The harness writes this as a user record of its own. Left in, it becomes a turn
     # nobody typed — see trap 5 above.
     r"|\[Request interrupted by user[^\]]*\]"
