@@ -46,13 +46,15 @@ HANDLED = {
     "assistant": "a model response — its text, tool calls, model, effort and token depth",
     "user": "a human turn, a tool result, or a compaction summary, told apart by flags",
     "system/compact_boundary": "the seam, and the harness's own figures for the compaction",
+    "attachment": "a message typed while a turn is being served, read as a turn when it is a "
+                  "`queued_command` from a human `origin` (trap 9); the rest are hook output, "
+                  "files and machine notifications, and are skipped",
 }
 
 # Skipped on purpose, each with the reason it carries nothing this tool counts. An entry
 # here is a claim about another program's records, so the ones that could plausibly hold a
 # human turn were opened and read rather than inferred from their names.
 IGNORED = {
-    "attachment": "hook output and files attached to a prompt; the prompt is a `user` record",
     "last-prompt": "a `leafUuid` pointer to the prompt record, carrying no text of its own",
     "queue-operation": "a prompt typed while the previous one was still being answered. "
                        "Measured on this corpus: of 62 enqueued inside answered sessions, 37 "
@@ -61,7 +63,9 @@ IGNORED = {
                        "sent. Counting these would double a turn — and the two slash "
                        "commands strengthened that after trap 8: they used to be stripped "
                        "either way, and a queued `/skill brief` now becomes a turn when it "
-                       "arrives, so this record is the second copy rather than the only one",
+                       "arrives, so this record is the second copy rather than the only one. "
+                       "A prompt delivered mid-turn arrives as a `queued_command` attachment "
+                       "instead, which is the copy `load` reads (trap 9)",
     "mode": "which mode the session is in — UI state, not conversation",
     "permission-mode": "the permission mode in force — UI state, not conversation",
     "ai-title": "the generated session title",
@@ -239,8 +243,8 @@ def census(paths: Iterable[Path] | None = None,
            loader: Callable[[Path], Session] = None) -> dict:
     """Every record type in a corpus, counted, against what this module declares.
 
-    R-002. `IGNORED` makes thirteen claims about records this parser skips and `HANDLED`
-    three about records it reads; all sixteen came out of a throwaway script in a temp
+    R-002. `IGNORED` makes twelve claims about records this parser skips and `HANDLED`
+    four about records it reads; all sixteen came out of a throwaway script in a temp
     directory that no longer exists. A claim that cannot be re-run is a claim nobody can
     check, and this parser's failure mode is silence — a renamed record is skipped without a
     trace while every count stays arithmetically correct and describes a fraction of the

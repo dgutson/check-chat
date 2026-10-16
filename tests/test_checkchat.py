@@ -2,7 +2,7 @@
 
 Two kinds of test here, and the second kind is the point.
 
-The first kind guards the seven wire-format traps in `transcript.py`. Each one, if
+The first kind guards the nine wire-format traps in `transcript.py`. Each one, if
 mishandled, corrupts every downstream count without raising anything — a session
 looks twice as long, or a user declining a command looks like a broken tool. They are
 regression tests for bugs that do not announce themselves.
@@ -70,7 +70,7 @@ def write(tmp_path, records, name="s.jsonl"):
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 
 
-# -------------------------------------------------- the eight format traps
+# -------------------------------------------------- the nine format traps
 
 def test_split_records_are_one_response(tmp_path):
     """Trap 1: one API response can be several records sharing a requestId."""
@@ -226,6 +226,56 @@ def test_a_bare_slash_command_is_still_not_a_turn(tmp_path):
     ], name="bare_slash.jsonl"))
     assert [t.prompt for t in sess.turns] == ["go"], \
         "a harness control the person typed at the prompt is not a brief it can be graded on"
+
+
+def _queued(prompt, origin="human"):
+    """A message delivered while a turn is being served, in the shape the harness writes.
+
+    No `humanTurn`: the earliest of these records lack it, and every human one carries
+    `origin`.
+    """
+    return {"type": "attachment", "timestamp": "2026-08-08T00:00:00Z",
+            "attachment": {"type": "queued_command", "prompt": prompt, "commandMode": "prompt",
+                           "origin": {"kind": origin}}}
+
+
+def test_a_message_typed_while_the_assistant_works_is_a_turn(tmp_path):
+    """Trap 9: a message typed mid-turn arrives as an `attachment`, not a `user` record.
+
+    Skipping attachments dropped exactly the corrections made while the work runs, a "stop"
+    among them, so a judge graded the session against instructions it never saw. What the
+    assistant did after the message is its reply, and a pasted image makes the prompt a list.
+    """
+    sess = transcript.load(write(tmp_path, [
+        _human("go"),
+        _asst("", calls=[("t1", "Bash", {"command": "make"})]),
+        _result("t1", "ok"),
+        _queued("stop, that is not the scope"),
+        _asst("Stopping.", req="r2"),
+        _queued([{"type": "text", "text": "and look at this"}, {"type": "image", "source": {}}]),
+        _asst("Looking.", req="r3"),
+    ], name="queued.jsonl"))
+    assert [t.prompt for t in sess.turns] == ["go", "stop, that is not the scope",
+                                              "and look at this"]
+    assert [s.turn for s in sess.steps] == [0, 1, 2], "the work after a message answers it"
+
+
+def test_machine_traffic_in_the_same_record_is_still_not_a_turn(tmp_path):
+    """The direction trap 9's fix must not fail in: the same record carries task
+    notifications and subagent reports. `clean()` strips a notification but not an
+    `<agent-message>`, so the turn is keyed on `origin`, never on the text or `commandMode`.
+    """
+    sess = transcript.load(write(tmp_path, [
+        _human("go"),
+        _asst("", calls=[("t1", "Bash", {"command": "make"})]),
+        _result("t1", "ok"),
+        _queued("<task-notification><status>completed</status></task-notification>",
+                origin="task-notification"),
+        _queued('<agent-message from="a1">[Subagent hand-back] done, 14 items.</agent-message>',
+                origin="peer"),
+        _asst("done", req="r2"),
+    ], name="queued_machine.jsonl"))
+    assert [t.prompt for t in sess.turns] == ["go"], "nobody typed a subagent's report"
 
 
 def test_declined_call_is_not_a_failure(tmp_path):
@@ -3227,7 +3277,7 @@ def test_a_missing_shape_is_told_from_a_thing_that_never_happened(tmp_path):
 def test_the_census_reports_a_type_nobody_declared(tmp_path):
     """R-002, direction one: the parser's failure mode is silence, at corpus scale.
 
-    `formats.IGNORED` makes thirteen claims about record types this parser skips, and every
+    `formats.IGNORED` makes twelve claims about record types this parser skips, and every
     one of them came out of a throwaway script in a temp directory — the mistake item 23 was
     written to end, made by the item written to end it. A claim that cannot be re-run is a
     claim nobody can check, so the census is a function that ships.
@@ -3235,7 +3285,7 @@ def test_the_census_reports_a_type_nobody_declared(tmp_path):
     d = tmp_path / "projects" / "-repo"
     d.mkdir(parents=True)
     write(d, [_human("go"), _asst("done"),
-              {"type": "attachment", "timestamp": "2026-08-08T00:00:00Z"},
+              {"type": "last-prompt", "timestamp": "2026-08-08T00:00:00Z"},
               {"type": "assistant-v2", "timestamp": "2026-08-08T00:00:00Z"},
               {"type": "assistant-v2", "timestamp": "2026-08-08T00:00:00Z"}], name="a.jsonl")
 
@@ -3243,7 +3293,7 @@ def test_the_census_reports_a_type_nobody_declared(tmp_path):
     by = {t["type"]: t for t in c["types"]}
     assert by["assistant-v2"] == {"type": "assistant-v2", "records": 2, "files": 1,
                                   "declared": "undeclared"}
-    assert by["attachment"]["declared"] == "ignored"
+    assert by["last-prompt"]["declared"] == "ignored"
     assert by["user"]["declared"] == "handled"
     assert c["undeclared"] == ["assistant-v2"], "the finding is the list, not a count to read"
     assert c["files"] == 1 and c["records"] == 5
@@ -3318,7 +3368,7 @@ def test_the_census_is_reachable_from_the_command_line_and_says_so_in_its_exit_c
     assert "attachment" in out and formats.CENSUS_POPULATION in out, \
         "the flagged names and what was walked both have to reach the person running it"
 
-    write(d, [_human("go"), _asst("done"),
+    write(d, [_human("go"), _asst("done"), _queued("and this"),
               *({"type": k, "timestamp": "2026-08-08T00:00:00Z"} for k in formats.IGNORED
                 if "/" not in k),
               *({"type": "system", "subtype": k.split("/")[1],

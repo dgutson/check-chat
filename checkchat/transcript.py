@@ -2,7 +2,7 @@
 
 Self-contained on purpose — check-chat is meant to be installable on its own.
 
-Eight things about the wire format are easy to get wrong, and each of them silently
+Nine things about the wire format are easy to get wrong, and each of them silently
 corrupts every count downstream:
 
 1. One API response is written as SEVERAL records, one per content block, sharing a
@@ -74,6 +74,14 @@ corrupts every count downstream:
    driven only by bare `/skill` invocations still records no turn, which is 19 of the 44,
    and whether a bare invocation is itself an ask is **R-009** rather than a thing
    settled quietly here.
+
+9. A **message typed while the assistant is working** is not a `user` record. The harness
+   delivers it between tool calls as an `attachment` of type `queued_command`, the record
+   type that also carries hook output, task notifications and subagent reports. Skipping
+   attachments loses exactly the corrections made mid-task, a "stop" among them, and a
+   judge grading constraint retention never sees the constraint. Only `origin.kind ==
+   "human"` is a turn: `clean()` strips a notification but not a subagent's
+   `<agent-message>` report, and the earliest of these records carry no `humanTurn`.
 """
 
 from __future__ import annotations
@@ -410,6 +418,18 @@ def load(path: str | Path, max_bytes: int = 24 * 1024 * 1024) -> Session:
                 preserved=len(kept) if isinstance(kept, list) else 0,
                 from_boundary=True,
             ))
+            continue
+
+        if rtype == "attachment":
+            # Trap 9. Keyed on `origin`, because the same record carries subagent reports
+            # that `clean()` does not strip.
+            att = rec.get("attachment") if isinstance(rec.get("attachment"), dict) else {}
+            origin = att.get("origin") if isinstance(att.get("origin"), dict) else {}
+            if att.get("type") == "queued_command" and origin.get("kind") == "human":
+                text = clean(_text_of(att.get("prompt")))
+                if text:
+                    turn = len(sess.turns)
+                    sess.turns.append(Turn(index=turn, prompt=text, first_step=len(sess.steps)))
             continue
 
         if rtype != "user":
