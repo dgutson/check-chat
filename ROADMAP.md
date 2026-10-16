@@ -7,7 +7,7 @@
 > entries are no longer present in this file.
 
 Format: 1
-Next ID: R-012
+Next ID: R-013
 
 The rest of what this file used to carry now lives in `HISTORY.md`: the index of shipped
 items, the known limitations, the ideas measured to nothing, and the ways a corpus
@@ -26,8 +26,9 @@ as are R-001, R-002 and R-006.
 and the two items behind it wait on R-003: tuning a detector needs a corpus that is not
 Daniel's, and that wait is shortened by asking someone, which is not a task this file can
 hold. What is startable is everything that is not a threshold — R-009 is a semantics
-decision about what counts as a turn and R-011 is one about the judge's own settings, both
-measured on this machine because a parser reading the wire format wrong is wrong on
+decision about what counts as a turn, R-011 is one about the judge's own settings and R-012
+is what the harness's newer record types hold, all measured on this machine because a
+parser reading the wire format wrong is wrong on
 anybody's transcripts; R-010 is which *tree* a number came from, which has to be settled
 before a stored number means anything; and R-007 and R-008 are about the store the
 measurements land in. Further candidates for promotion, if the
@@ -90,6 +91,15 @@ prose and about what a stored number was taken against; neither relocates anythi
 - **Why:** Two hand-rolled sweeps "returned a plausible wrong number on the first run and were believed" — 28 of 37 where the truth was 6 of 48, 0 of 196 where the shipping function showed 24 — and the rule that came out of it is **call the checks, never model them**. A number that has to be re-derived from memory before it can be cited again is being modelled. What this does *not* buy is a before/after diff, and the item is scoped to say so: the corpus contains the measuring session and grows between runs (R-001 saw `batching` 49→50 and `responses_with_tools` median 35→37 from a change that only removes turns, all of it the live session), and that register's conclusion was **diff per session, not per aggregate**. A stored aggregate row would have named the corpus size, but it still cannot say which member moved; R-006 is the other half, where an unmoved aggregate was not evidence the change was inert. So prose stays primary and the JSONL is what prose points at. The per-session rows that *would* settle an R-001 stay a live `observe` run and out of the committed file, because a per-session row is contentless but not anonymous at n=1.
 - **Outcome:** a sweep number quoted in prose or a docstring can be re-fetched with the commit and the corpus it was taken against, instead of re-run against a corpus that has changed underneath it — and the row says what it cannot answer.
 - **Blocked-by:** R-010 — a row stamped with a commit but not with the tree it ran in is the provenance bug this item exists to close, written down in a committed file.
+- **Enables:** —
+
+### R-012 — Declare the record types the census flags, so `formats` is an alarm again
+
+- **Category:** Measurement
+- **What:** `checkchat --census` reports 14 record types that neither `formats.HANDLED` nor `formats.IGNORED` declares: `atis-latch`, `api-request-blob`, `api-request`, `api-request-shape`, `pr-link`, `cost-state`, `custom-title`, `bridge-session`, `system/bridge_status`, `system/scheduled_task_fire`, `isolation-latch`, `artifact-autoreact-ledger`, `artifact-comment-monitor` and `continued-in`. Open real records of each rather than reading the name, and either declare it in `IGNORED` with the reason or give it a branch in `transcript.load` with a test watched to fail. Start with the ones that could carry a person's words or start a turn: `bridge-session` and `system/bridge_status` (Remote Control), `system/scheduled_task_fire`, `continued-in` and `custom-title`.
+- **Why:** On 2026-10-16 `formats` fired in 269 of the 274 sessions outside `/tmp`, every one for undeclared types alone. A check that fires in nearly every session is a ranking, not an alarm, and a reader learns to skip it. That is the cover trap 9 had: `attachment` changed meaning under an `IGNORED` entry written on 08-14, and every message typed mid-turn was missing from the excerpts for a month. Each type above appeared after that census, so each is one more place for the same failure.
+- **Outcome:** `checkchat --census` exits 0 on this machine; every new declaration states what its records hold, read off real ones; any type that carries human input has a branch and a test watched to fail; and `formats` fires only on a session carrying a type nobody has declared.
+- **Blocked-by:** —
 - **Enables:** —
 
 ## Next
